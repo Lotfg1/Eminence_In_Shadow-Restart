@@ -1,0 +1,15 @@
+{
+    "audio": {
+        "master_volume": 1.0,
+        "music_volume": 1.0,
+        "sfx_volume": 1.0
+    },
+    "keybinds": {
+        "MoveLeft": 104,
+        "MoveRight": 106,
+        "Jump": 119,
+        "Interact": 101,
+        "Pause": 27,
+        "Attack": 32
+    }
+}
