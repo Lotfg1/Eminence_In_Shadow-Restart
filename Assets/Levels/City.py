@@ -22,11 +22,19 @@ def load_level():
     # Player start
     player_start = (100, 920-64-64)
 
+    # No enemies in city
+    enemies = []
+
     return {
         "ground": ground,
         "platforms": platforms,
         "npcs": npcs,
         "interactables": interactables,
+        "coins": [],  # No coins in city
+        "enemies": enemies,
         "player_start": player_start,
-        "infinite": False
+        "infinite": False,
+        "world_width": 1080,
+        "level_id": "city",
+        "music": "city_theme"
     }

@@ -5,11 +5,14 @@
         "sfx_volume": 1.0
     },
     "keybinds": {
-        "MoveLeft": 104,
-        "MoveRight": 106,
+        "MoveLeft": 97,
+        "MoveRight": 100,
         "Jump": 119,
         "Interact": 101,
         "Pause": 27,
         "Attack": 32
+    },
+    "display": {
+        "zoom_level": 1.25
     }
 }

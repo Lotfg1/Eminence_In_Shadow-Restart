@@ -9,6 +9,10 @@ class Interactable:
 
     def interact(self, player, game):
         pass
+    
+    def draw(self, screen, camera_x, camera_y, config):
+        """Default draw method - can be overridden"""
+        pass
 
 # ----------------------------
 # BED
@@ -16,38 +20,35 @@ class Interactable:
 class Bed(Interactable):
     def __init__(self, x, y, width=64, height=32):
         super().__init__(x, y, width, height, collidable=True)
+        self.bed_interaction_active = False
 
     def interact(self, player, game):
-        self.use_bed(player, game)
+        if not self.bed_interaction_active:
+            self.bed_interaction_active = True
+            game.bed_fade_active = True
+            game.bed_fade_phase = "fade_out"
+            game.bed_fade_alpha = 0
+            game.pause_player_physics()
 
-    def use_bed(self, player, game):
-        fade = pygame.Surface((game.screen.get_width(), game.screen.get_height()))
-        fade.fill((0, 0, 0))
-        # Fade out
-        for alpha in range(0, 255, 10):
-            fade.set_alpha(alpha)
-            game.draw()
-            game.screen.blit(fade, (0, 0))
-            pygame.display.update()
-            pygame.time.delay(30)
-        # Show text
-        text = game.font.render("The next day...", True, (255, 255, 255))
-        for alpha in range(0, 255, 10):
-            fade.set_alpha(255)
-            game.draw()
-            fade.fill((0,0,0))
-            game.screen.blit(fade, (0,0))
-            game.screen.blit(text, (game.screen.get_width()//2 - text.get_width()//2,
-                                    game.screen.get_height()//2 - text.get_height()//2))
-            pygame.display.update()
-            pygame.time.delay(30)
-        # Fade back in
-        for alpha in range(255, 0, -10):
-            fade.set_alpha(alpha)
-            game.draw()
-            game.screen.blit(fade, (0, 0))
-            pygame.display.update()
-            pygame.time.delay(30)
+    def draw(self, screen, camera_x, camera_y, config):
+        """Draw bed with config colors"""
+        screen_rect = self.rect.move(-camera_x, -camera_y)
+        if config.ALPHA_BED < 255:
+            temp_surface = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
+            temp_surface.fill((*config.COLOR_BED, config.ALPHA_BED))
+            screen.blit(temp_surface, screen_rect.topleft)
+        else:
+            pygame.draw.rect(screen, config.COLOR_BED, screen_rect)
+    
+    def draw(self, screen, camera_x, camera_y, config):
+        """Draw bed with config colors"""
+        screen_rect = self.rect.move(-camera_x, -camera_y)
+        if config.ALPHA_BED < 255:
+            temp_surface = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
+            temp_surface.fill((*config.COLOR_BED, config.ALPHA_BED))
+            screen.blit(temp_surface, screen_rect.topleft)
+        else:
+            pygame.draw.rect(screen, config.COLOR_BED, screen_rect)
 
 # ----------------------------
 # MERCHANT
@@ -58,6 +59,16 @@ class Merchant(Interactable):
 
     def interact(self, player, game):
         game.active_menu = "merchant"
+    
+    def draw(self, screen, camera_x, camera_y, config):
+        """Draw merchant with config colors"""
+        screen_rect = self.rect.move(-camera_x, -camera_y)
+        if config.ALPHA_MERCHANT < 255:
+            temp_surface = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
+            temp_surface.fill((*config.COLOR_MERCHANT, config.ALPHA_MERCHANT))
+            screen.blit(temp_surface, screen_rect.topleft)
+        else:
+            pygame.draw.rect(screen, config.COLOR_MERCHANT, screen_rect)
 
 # ----------------------------
 # WALL
@@ -70,20 +81,109 @@ class Wall(Interactable):
     def interact(self, player, game):
         if self.destination_index:
             game.open_travel_menu()
+    
+    def draw(self, screen, camera_x, camera_y, config):
+        """Draw wall with config colors"""
+        screen_rect = self.rect.move(-camera_x, -camera_y)
+        if config.ALPHA_WALL < 255:
+            temp_surface = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
+            temp_surface.fill((*config.COLOR_WALL, config.ALPHA_WALL))
+            screen.blit(temp_surface, screen_rect.topleft)
+        else:
+            pygame.draw.rect(screen, config.COLOR_WALL, screen_rect)
+
+# ----------------------------
+# COIN (Animated)
+# ----------------------------
+class Coin:
+    def __init__(self, x, y, width=32, height=32):
+        self.rect = pygame.Rect(x, y, width, height)
+        self.collidable = False  # Coins don't block movement
+        
+        # Animation settings
+        self.animation_timer = 0
+        self.animation_interval = 5.0  # Animate every 5 seconds
+        self.is_animating = False
+        self.animation_frame = 0
+        self.animation_duration = 0.5  # Animation lasts 0.5 seconds
+        
+        # Try to load coin image and animation
+        self.static_image = None
+        self.animation_frames = []
+        try:
+            self.static_image = pygame.image.load("Assets/Photos/Coin.png")
+            self.static_image = pygame.transform.scale(self.static_image, (width, height))
+        except:
+            pass
+        
+        try:
+            # Try to load GIF frames (requires pillow)
+            from PIL import Image
+            gif = Image.open("Assets/Animations/Coin.gif")
+            self.animation_frames = []
+            try:
+                while True:
+                    frame = gif.copy()
+                    frame = frame.convert("RGBA")
+                    # Convert PIL image to pygame surface
+                    mode = frame.mode
+                    size = frame.size
+                    data = frame.tobytes()
+                    pygame_image = pygame.image.fromstring(data, size, mode)
+                    pygame_image = pygame.transform.scale(pygame_image, (width, height))
+                    self.animation_frames.append(pygame_image)
+                    gif.seek(gif.tell() + 1)
+            except EOFError:
+                pass
+        except:
+            pass
+        
+        # Color fallback if no images
+        self.color = (255, 215, 0)  # Gold color
+    
+    def update(self, dt):
+        """Update animation state"""
+        if self.is_animating:
+            self.animation_frame += dt
+            if self.animation_frame >= self.animation_duration:
+                self.is_animating = False
+                self.animation_frame = 0
+                self.animation_timer = 0
+        else:
+            self.animation_timer += dt
+            if self.animation_timer >= self.animation_interval:
+                self.is_animating = True
+                self.animation_frame = 0
+    
+    def draw(self, screen, camera_x, camera_y):
+        """Draw the coin"""
+        screen_rect = self.rect.move(-camera_x, -camera_y)
+        
+        if self.is_animating and self.animation_frames:
+            # Show animation
+            frame_index = int((self.animation_frame / self.animation_duration) * len(self.animation_frames))
+            frame_index = min(frame_index, len(self.animation_frames) - 1)
+            screen.blit(self.animation_frames[frame_index], screen_rect.topleft)
+        elif self.static_image:
+            # Show static image
+            screen.blit(self.static_image, screen_rect.topleft)
+        else:
+            # Fallback to colored rectangle
+            pygame.draw.rect(screen, self.color, screen_rect)
+            # Draw a simple coin symbol
+            pygame.draw.circle(screen, (255, 255, 0), screen_rect.center, min(screen_rect.width, screen_rect.height) // 3)
 
 # ----------------------------
 # TENT (Large Sloped Polygon)
 # ----------------------------
 class Tent:
-    """A large tent structure with sloped sides"""
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.width = 200  # Fixed size, larger
-        self.height = 150  # Fixed size, larger
+        self.width = 120
+        self.height = 90
         self.rect = pygame.Rect(x, y - self.height, self.width, self.height)
-        self.collidable = False  # Use custom collision for sliding
-        self.color = (120, 80, 60)
+        self.collidable = False
         
         # Define triangle points for slope detection
         self.peak_x = x + self.width // 2
@@ -93,41 +193,32 @@ class Tent:
         self.base_y = y - 20
     
     def is_player_on_tent(self, player):
-        """Check if player is on the tent surface"""
         player_center_x = player.rect.centerx
         player_bottom = player.rect.bottom
         
-        # Check if player is within horizontal bounds
         if player_center_x < self.left_x - 5 or player_center_x > self.right_x + 5:
             return False
         
-        # Check if player is within vertical bounds
         if player_bottom < self.peak_y - 10 or player_bottom > self.base_y + 15:
             return False
         
-        # Get the tent slope y at player's x position
         tent_y = self.get_tent_y_at_x(player_center_x)
         
-        # Check if player is near the tent surface and moving downward
         return abs(player_bottom - tent_y) < 25 and player.y_momentum >= -2
     
     def get_tent_y_at_x(self, player_x):
-        """Calculate the y position on the tent at given x coordinate"""
-        # Clamp to tent bounds
         if player_x <= self.left_x:
             return self.base_y
         if player_x >= self.right_x:
             return self.base_y
         
         if player_x <= self.peak_x:
-            # Left slope
             slope_length = self.peak_x - self.left_x
             if slope_length == 0:
                 return self.base_y
             progress = (player_x - self.left_x) / slope_length
             y_on_slope = self.base_y + (self.peak_y - self.base_y) * progress
         else:
-            # Right slope
             slope_length = self.right_x - self.peak_x
             if slope_length == 0:
                 return self.base_y
@@ -141,19 +232,14 @@ class Tent:
         if not self.is_player_on_tent(player):
             return False
         
-        # Get current tent y at player position
         tent_y = self.get_tent_y_at_x(player.rect.centerx)
         
-        # Position player on the tent
         player.rect.bottom = int(tent_y)
-        player.y_momentum = 0  # Reset momentum to stick to surface
+        player.y_momentum = 0
         
-        # Determine which side of the peak the player is on and apply slide
         if player.rect.centerx < self.peak_x:
-            # Left slope - slide left
             player.rect.x -= 3
         else:
-            # Right slope - slide right
             player.rect.x += 3
         
         player.on_ground = False
@@ -163,34 +249,50 @@ class Tent:
         """Return the base rectangle for collision"""
         return pygame.Rect(self.x, self.base_y, self.width, 20)
     
-    def draw(self, screen, camera_x):
-        """Draw the tent as a triangle on a rectangle base"""
+    def draw(self, screen, camera_x, camera_y, config):
         # Base
-        base_rect = pygame.Rect(self.x - camera_x, self.y - 20, self.width, 20)
-        pygame.draw.rect(screen, (90, 60, 40), base_rect)
+        base_rect = pygame.Rect(self.x - camera_x, self.y - camera_y - 20, self.width, 20)
+        
+        if config.ALPHA_TENT < 255:
+            base_surface = pygame.Surface((self.width, 20), pygame.SRCALPHA)
+            base_surface.fill((*config.COLOR_TENT_BASE, config.ALPHA_TENT))
+            screen.blit(base_surface, base_rect.topleft)
+        else:
+            pygame.draw.rect(screen, config.COLOR_TENT_BASE, base_rect)
         
         # Tent triangle
         points = [
-            (self.x - camera_x, self.y - 20),
-            (self.peak_x - camera_x, self.peak_y),
-            (self.right_x - camera_x, self.y - 20)
+            (self.x - camera_x, self.y - camera_y - 20),
+            (self.peak_x - camera_x, self.peak_y - camera_y),
+            (self.right_x - camera_x, self.y - camera_y - 20)
         ]
-        pygame.draw.polygon(screen, self.color, points)
-        pygame.draw.polygon(screen, (80, 50, 30), points, 3)
+        
+        if config.ALPHA_TENT < 255:
+            # Draw on temporary surface for alpha
+            tent_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            local_points = [
+                (0, self.height - 20),
+                (self.width // 2, 0),
+                (self.width, self.height - 20)
+            ]
+            pygame.draw.polygon(tent_surface, (*config.COLOR_TENT, config.ALPHA_TENT), local_points)
+            pygame.draw.polygon(tent_surface, (*config.COLOR_TENT_OUTLINE, config.ALPHA_TENT), local_points, 3)
+            screen.blit(tent_surface, (self.x - camera_x, self.peak_y - camera_y))
+        else:
+            pygame.draw.polygon(screen, config.COLOR_TENT, points)
+            pygame.draw.polygon(screen, config.COLOR_TENT_OUTLINE, points, 3)
 
 # ----------------------------
 # ROCK (Small Sloped Polygon)
 # ----------------------------
 class Rock:
-    """A small rock obstacle with sloped sides"""
     def __init__(self, x, y):
         self.x = x
         self.y = y
-        self.width = 100  # Fixed size, smaller
-        self.height = 80   # Fixed size, smaller
+        self.width = 160  # Increased from 100
+        self.height = 128  # Increased from 80
         self.rect = pygame.Rect(x, y - self.height, self.width, self.height)
-        self.collidable = False  # Use custom collision for sliding
-        self.color = (70, 70, 70)
+        self.collidable = False
         
         # Define triangle points for slope detection
         self.peak_x = x + self.width // 2
@@ -200,41 +302,36 @@ class Rock:
         self.base_y = y
     
     def is_player_on_rock(self, player):
-        """Check if player is on the rock surface"""
         player_center_x = player.rect.centerx
         player_bottom = player.rect.bottom
         
-        # Check if player is within horizontal bounds
         if player_center_x < self.left_x - 5 or player_center_x > self.right_x + 5:
             return False
         
-        # Check if player is within vertical bounds
         if player_bottom < self.peak_y - 10 or player_bottom > self.base_y + 15:
             return False
         
-        # Get the rock slope y at player's x position
         rock_y = self.get_rock_y_at_x(player_center_x)
         
-        # Check if player is near the rock surface and moving downward
         return abs(player_bottom - rock_y) < 25 and player.y_momentum >= -2
     
+    def get_collision_rect(self):
+        """Return the base rectangle for collision"""
+        return pygame.Rect(self.x, self.base_y - 10, self.width, 10)
+    
     def get_rock_y_at_x(self, player_x):
-        """Calculate the y position on the rock at given x coordinate"""
-        # Clamp to rock bounds
         if player_x <= self.left_x:
             return self.base_y
         if player_x >= self.right_x:
             return self.base_y
         
         if player_x <= self.peak_x:
-            # Left slope
             slope_length = self.peak_x - self.left_x
             if slope_length == 0:
                 return self.base_y
             progress = (player_x - self.left_x) / slope_length
             y_on_slope = self.base_y + (self.peak_y - self.base_y) * progress
         else:
-            # Right slope
             slope_length = self.right_x - self.peak_x
             if slope_length == 0:
                 return self.base_y
@@ -244,34 +341,40 @@ class Rock:
         return y_on_slope
     
     def handle_rock_collision(self, player):
-        """Make player slide off the rock"""
         if not self.is_player_on_rock(player):
             return False
         
-        # Get current rock y at player position
         rock_y = self.get_rock_y_at_x(player.rect.centerx)
         
-        # Position player on the rock
         player.rect.bottom = int(rock_y)
-        player.y_momentum = 0  # Reset momentum to stick to surface
+        player.y_momentum = 0
         
-        # Determine which side of the peak the player is on and apply slide
         if player.rect.centerx < self.peak_x:
-            # Left slope - slide left
             player.rect.x -= 3
         else:
-            # Right slope - slide right
             player.rect.x += 3
         
         player.on_ground = False
         return True
     
-    def draw(self, screen, camera_x):
-        """Draw the rock as a triangle"""
+    def draw(self, screen, camera_x, camera_y, config):
         points = [
-            (self.x - camera_x, self.base_y),
-            (self.peak_x - camera_x, self.peak_y),
-            (self.right_x - camera_x, self.base_y)
+            (self.x - camera_x, self.base_y - camera_y),
+            (self.peak_x - camera_x, self.peak_y - camera_y),
+            (self.right_x - camera_x, self.base_y - camera_y)
         ]
-        pygame.draw.polygon(screen, self.color, points)
-        pygame.draw.polygon(screen, (50, 50, 50), points, 3)
+        
+        if config.ALPHA_ROCK < 255:
+            # Draw on temporary surface for alpha
+            rock_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+            local_points = [
+                (0, self.height),
+                (self.width // 2, 0),
+                (self.width, self.height)
+            ]
+            pygame.draw.polygon(rock_surface, (*config.COLOR_ROCK, config.ALPHA_ROCK), local_points)
+            pygame.draw.polygon(rock_surface, (*config.COLOR_ROCK_OUTLINE, config.ALPHA_ROCK), local_points, 3)
+            screen.blit(rock_surface, (self.x - camera_x, self.peak_y - camera_y))
+        else:
+            pygame.draw.polygon(screen, config.COLOR_ROCK, points)
+            pygame.draw.polygon(screen, config.COLOR_ROCK_OUTLINE, points, 3)

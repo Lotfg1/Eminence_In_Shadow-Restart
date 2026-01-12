@@ -40,7 +40,26 @@ class StartMenu:
         self.font = font
         self.options = ["Start", "Options", "Quit"]
         self.selected = 0
-        self.rect = pygame.Rect(0, 0, 400, 200)
+        
+        # Try to load background and title images
+        self.background_image = None
+        self.title_image = None
+        
+        try:
+            # Try to load background image
+            bg_path = "Assets/Photos/Start_Menu_Background.png"
+            self.background_image = pygame.image.load(bg_path).convert()
+        except:
+            # Use default background color if image not found
+            self.background_image = None
+        
+        try:
+            # Try to load title image
+            title_path = "Assets/Photos/Start_Menu_Title.png"
+            self.title_image = pygame.image.load(title_path).convert_alpha()
+        except:
+            # Use text title if image not found
+            self.title_image = None
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
@@ -54,39 +73,64 @@ class StartMenu:
                 return "quit"  # Escape from start menu quits game
 
     def draw(self, screen):
-        self.rect.center = (screen.get_width() // 2, screen.get_height() // 2)
-        pygame.draw.rect(screen, (40, 40, 40), self.rect)
+        # Draw start menu
+        # Draw background
+        if self.background_image:
+            # Scale background to fit screen
+            scaled_bg = pygame.transform.scale(self.background_image, (screen.get_width(), screen.get_height()))
+            screen.blit(scaled_bg, (0, 0))
+        else:
+            # Default dark background
+            screen.fill((20, 20, 40))
+        
+        # Draw title
+        title_y = screen.get_height() // 4
+        if self.title_image:
+            # Center the title image
+            title_x = (screen.get_width() - self.title_image.get_width()) // 2
+            screen.blit(self.title_image, (title_x, title_y))
+        else:
+            # Default text title
+            title_text = self.font.render("Eminence in Shadow", True, (255, 255, 255))
+            title_x = (screen.get_width() - title_text.get_width()) // 2
+            screen.blit(title_text, (title_x, title_y))
+        
+        # Draw menu options (centered below title)
+        menu_start_y = screen.get_height() // 2 + 100
         for i, option in enumerate(self.options):
             color = (255, 255, 0) if i == self.selected else (255, 255, 255)
             text = self.font.render(option, True, color)
-            screen.blit(text, (self.rect.x + 50, self.rect.y + 40 + i * 40))
+            text_x = (screen.get_width() - text.get_width()) // 2
+            text_y = menu_start_y + i * 50
+            screen.blit(text, (text_x, text_y))
 
 # ----------------------------
-# PAUSE MENU (single rectangle at top)
+# PAUSE MENU (fills top of screen)
 # ----------------------------
 class PauseMenu:
     def __init__(self, font, screen_width):
         self.font = font
         self.options = ["Inventory", "Status", "Options", "Combos", "Go Back", "Quit"]
         self.selected = 0
-        self.width = screen_width - 40
-        self.height = 40 + len(self.options) * 40
+        self.width = screen_width  # Full width
+        self.height = 80  # Fixed compact height
         self.surface = pygame.Surface((self.width, self.height))
-        self.rect = self.surface.get_rect(topleft=(20, 20))  # Top of screen
+        self.rect = self.surface.get_rect(topleft=(0, 0))  # Top of screen, full width
 
     def handle_input(self, event):
         if event.type != pygame.KEYDOWN:
             return None
-        if event.key == pygame.K_w:
+        # Use A and D for left/right navigation
+        if event.key == pygame.K_a:
             self.selected = (self.selected - 1) % len(self.options)
-        elif event.key == pygame.K_s:
+        elif event.key == pygame.K_d:
             self.selected = (self.selected + 1) % len(self.options)
-        elif event.key in (pygame.K_RETURN, pygame.K_e):
+        elif event.key in (pygame.K_RETURN, pygame.K_e, pygame.K_SPACE):
             choice = self.options[self.selected]
             if choice == "Quit":
                 return "quit"
             elif choice == "Go Back":
-                return "go_back"  # Changed to trigger timer
+                return "go_back"
             elif choice == "Options":
                 return "settings"
             else:
@@ -96,10 +140,19 @@ class PauseMenu:
 
     def draw(self, screen):
         self.surface.fill((50, 50, 50))
+        
+        # Title
+        title = self.font.render("PAUSE", True, (255, 255, 255))
+        self.surface.blit(title, (self.width // 2 - title.get_width() // 2, 5))
+        
+        # Options in horizontal layout
+        option_spacing = self.width // (len(self.options) + 1)
         for i, option in enumerate(self.options):
             color = (255, 255, 0) if i == self.selected else (255, 255, 255)
             text = self.font.render(option, True, color)
-            self.surface.blit(text, (20, 20 + i * 40))
+            x_pos = option_spacing * (i + 1) - text.get_width() // 2
+            self.surface.blit(text, (x_pos, 40))
+        
         screen.blit(self.surface, self.rect.topleft)
 
 # ----------------------------
@@ -118,13 +171,14 @@ class TravelMenu(BaseMenu):
         super().__init__(options, font)
 
 # ----------------------------
-# SETTINGS MENU (integrates Settings class)
+# SETTINGS MENU (with zoom control)
 # ----------------------------
 class SettingsMenu:
-    def __init__(self, font, settings):
+    def __init__(self, font, settings, config):
         self.font = font
         self.settings = settings
-        self.options = ["Master Volume", "Music Volume", "SFX Volume",
+        self.config = config
+        self.options = ["Master Volume", "Music Volume", "SFX Volume", "Zoom Level",
                         "Move Left", "Move Right", "Jump", "Interact", "Attack", "Back"]
         self.selected = 0
         self.waiting_for_key = None  # Which action is waiting for keybind
@@ -150,6 +204,19 @@ class SettingsMenu:
             elif choice in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = choice.lower().replace(" ", "_")
                 self.settings.set_audio(key, min(1.0, self.settings.audio[key] + 0.1))
+            elif choice == "Zoom Level":
+                # Cycle through zoom levels
+                try:
+                    current_zoom = self.settings.display.get("zoom_level", 1.5)
+                    if current_zoom in self.config.AVAILABLE_ZOOM_LEVELS:
+                        current_index = self.config.AVAILABLE_ZOOM_LEVELS.index(current_zoom)
+                    else:
+                        current_index = 0
+                    next_index = (current_index + 1) % len(self.config.AVAILABLE_ZOOM_LEVELS)
+                    self.settings.set_display("zoom_level", self.config.AVAILABLE_ZOOM_LEVELS[next_index])
+                    return "zoom_changed"
+                except Exception as e:
+                    print(f"Zoom error: {e}")
             elif choice in ["Move Left", "Move Right", "Jump", "Interact", "Attack"]:
                 # Start remapping
                 self.waiting_for_key = choice.replace(" ", "")
@@ -158,18 +225,44 @@ class SettingsMenu:
             if choice in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = choice.lower().replace(" ", "_")
                 self.settings.set_audio(key, max(0.0, self.settings.audio[key] - 0.1))
+            elif choice == "Zoom Level":
+                # Cycle backwards through zoom levels
+                try:
+                    current_zoom = self.settings.display.get("zoom_level", 1.5)
+                    if current_zoom in self.config.AVAILABLE_ZOOM_LEVELS:
+                        current_index = self.config.AVAILABLE_ZOOM_LEVELS.index(current_zoom)
+                    else:
+                        current_index = 0
+                    next_index = (current_index - 1) % len(self.config.AVAILABLE_ZOOM_LEVELS)
+                    self.settings.set_display("zoom_level", self.config.AVAILABLE_ZOOM_LEVELS[next_index])
+                    return "zoom_changed"
+                except Exception as e:
+                    print(f"Zoom error: {e}")
         elif event.key == pygame.K_d:
             choice = self.options[self.selected]
             if choice in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = choice.lower().replace(" ", "_")
                 self.settings.set_audio(key, min(1.0, self.settings.audio[key] + 0.1))
+            elif choice == "Zoom Level":
+                # Cycle through zoom levels
+                try:
+                    current_zoom = self.settings.display.get("zoom_level", 1.5)
+                    if current_zoom in self.config.AVAILABLE_ZOOM_LEVELS:
+                        current_index = self.config.AVAILABLE_ZOOM_LEVELS.index(current_zoom)
+                    else:
+                        current_index = 0
+                    next_index = (current_index + 1) % len(self.config.AVAILABLE_ZOOM_LEVELS)
+                    self.settings.set_display("zoom_level", self.config.AVAILABLE_ZOOM_LEVELS[next_index])
+                    return "zoom_changed"
+                except Exception as e:
+                    print(f"Zoom error: {e}")
         elif event.key == pygame.K_ESCAPE:
             return "close"  # Escape from settings returns to previous menu
 
         return None
 
     def draw(self, screen):
-        width, height = 500, 500
+        width, height = 600, 550
         surf = pygame.Surface((width, height))
         surf.fill((40, 40, 40))
 
@@ -180,6 +273,10 @@ class SettingsMenu:
             if option in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = option.lower().replace(" ", "_")
                 display_text += f": {int(self.settings.audio[key]*100)}%"
+            # Show zoom level
+            elif option == "Zoom Level":
+                current_zoom = self.settings.display.get("zoom_level", 1.5)
+                display_text += f": {current_zoom}x"
             # Show keybinds
             elif option in ["Move Left", "Move Right", "Jump", "Interact", "Attack"]:
                 display_text += f": {pygame.key.name(self.settings.keybinds[option.replace(' ', '')])}"
@@ -188,6 +285,10 @@ class SettingsMenu:
 
             text = self.font.render(display_text, True, color)
             surf.blit(text, (40, 40 + i * 40))
+        
+        # Add instructions
+        instructions = self.font.render("Use A/D to change values", True, (150, 150, 150))
+        surf.blit(instructions, (width // 2 - instructions.get_width() // 2, height - 40))
 
         rect = surf.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
         screen.blit(surf, rect.topleft)

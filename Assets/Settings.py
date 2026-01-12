@@ -17,6 +17,9 @@ class Settings:
             "Interact": 101,
             "Pause": 27
         }
+        self.display = {
+            "zoom_level": 1.5
+        }
         self.load()
 
     def load(self):
@@ -25,11 +28,13 @@ class Settings:
                 data = json.load(f)
                 self.audio.update(data.get("audio", {}))
                 self.keybinds.update(data.get("keybinds", {}))
+                self.display.update(data.get("display", {}))
 
     def save(self):
         data = {
             "audio": self.audio,
-            "keybinds": self.keybinds
+            "keybinds": self.keybinds,
+            "display": self.display
         }
         with open(self.file_path, "w") as f:
             json.dump(data, f, indent=4)
@@ -44,4 +49,10 @@ class Settings:
         """Change an audio setting in memory"""
         if setting in self.audio:
             self.audio[setting] = max(0.0, min(1.0, value))
+            self.save()
+    
+    def set_display(self, setting, value):
+        """Change a display setting"""
+        if setting in self.display:
+            self.display[setting] = value
             self.save()

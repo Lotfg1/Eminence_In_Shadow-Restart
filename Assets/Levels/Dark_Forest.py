@@ -1,6 +1,7 @@
 import pygame
 import random
 from Assets.Interactables import Wall, Merchant, Tent, Rock
+from Assets.Characters import SmallBandit, LargeBandit
 
 SEGMENT_WIDTH = 768
 SCREEN_HEIGHT = 920
@@ -12,8 +13,9 @@ HEIGHT_CHANGE_MAX = 3000
 # Natural occurrence configuration
 MERCHANT_CHANCE = 0.01  # 1% chance per segment
 MERCHANT_COOLDOWN = 50  # Can't spawn for 50 segments after appearing
-TENT_CHANCE = 1.00      # 5% chance per segment
+TENT_CHANCE = 0.05      # 5% chance per segment
 ROCK_CHANCE = 0.08      # 8% chance per segment
+ENEMY_CHANCE = 0.1      # 10% chance per segment to spawn enemy group
 
 # Platform density configuration
 MAX_PLATFORMS_PER_SEGMENT = 1  # Adjust this for fewer/more platforms
@@ -36,6 +38,8 @@ def load_level():
     natural_objects = []  # Tents and rocks
     tents = []
     rocks = []
+    coins = []  # No coins in Dark Forest
+    enemies = []  # Enemy list
 
     segments = {}
 
@@ -68,7 +72,7 @@ def load_level():
         segment_x = index * SEGMENT_WIDTH
         distance_since_change += SEGMENT_WIDTH
 
-        # Change height every 2000–3000 px
+        # Change height every 2000-3000 px
         if distance_since_change >= next_height_change:
             current_ground_y += random.choice([-GROUND_STEP, GROUND_STEP])
             current_ground_y = max(
@@ -137,6 +141,19 @@ def load_level():
             rock = Rock(rock_x, current_ground_y)
             segment_rocks.append(rock)
             segment_natural.append(rock)
+        
+        # ENEMIES - Spawn groups of 2-4 bandits
+        segment_enemies = []
+        if random.random() < ENEMY_CHANCE:
+            num_enemies = random.randint(2, 4)
+            for i in range(num_enemies):
+                enemy_x = segment_x + random.randint(150, SEGMENT_WIDTH - 150)
+                enemy_y = current_ground_y
+                # More large bandits in the Dark Forest (50/50 split)
+                if random.random() < 0.5:
+                    segment_enemies.append(SmallBandit(enemy_x, enemy_y))
+                else:
+                    segment_enemies.append(LargeBandit(enemy_x, enemy_y))
 
         # Save segment data
         segments[index] = {
@@ -145,7 +162,8 @@ def load_level():
             "natural_objects": segment_natural,
             "tents": segment_tents,
             "rocks": segment_rocks,
-            "interactables": segment_interactables
+            "interactables": segment_interactables,
+            "enemies": segment_enemies
         }
 
         # Extend global lists
@@ -155,6 +173,7 @@ def load_level():
         tents.extend(segment_tents)
         rocks.extend(segment_rocks)
         interactables.extend(segment_interactables)
+        enemies.extend(segment_enemies)
 
     # Pre-generate starting area
     for i in range(-4, 6):
@@ -172,6 +191,10 @@ def load_level():
         "natural_objects": natural_objects,
         "tents": tents,
         "rocks": rocks,
+        "coins": coins,
+        "enemies": enemies,
         "player_start": player_start,
-        "infinite": True
+        "infinite": True,
+        "level_id": "dark_forest",
+        "music": "battle_theme"
     }
