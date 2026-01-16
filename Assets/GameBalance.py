@@ -10,9 +10,9 @@ PLAYER = {
     "base_speed": 6,
     
     # Combat
-    "attack_damage": 15,
-    "m_attack_damage": 12,
-    "skill_attack_damage": 20,
+    "attack_damage": 3,
+    "m_attack_damage": 2,
+    "skill_attack_damage": 4,
     "defense": 8,
     "m_defense": 6,
     
@@ -32,6 +32,8 @@ PLAYER = {
 ENEMY = {
     # Speed multiplier (player speed * this)
     "speed_multiplier": 1.0 / 3.0,  # 1/3 of player speed
+    "chase_speed_multiplier": 0.08,  # Chase a bit faster than before
+    "patrol_speed_multiplier": 0.02,  # Patrol extremely slowly
     
     # Attack timing (on half notes = one attack per beat)
     "stab_beats": [1, 2],
@@ -43,8 +45,8 @@ ENEMY = {
     "attack_duration": 0.3,   # How long attack hitbox shows (seconds)
     
     # Knockback (platformer-style with gravity)
-    "stab_knockback": {"x": 8, "y": -4},    # Minor stun (1-2 beats)
-    "uppercut_knockback": {"x": 12, "y": -15},  # Major knockback with bounce
+    "stab_knockback": {"x": 8, "y": -2},    # Minor stun (reduced Y)
+    "uppercut_knockback": {"x": 12, "y": -6},  # Major knockback (reduced Y)
     "uppercut_stun": 0.3,
     "stab_stun": 0.8,  # 1-2 beats at 120 BPM
 }
@@ -56,7 +58,7 @@ ENEMY = {
 SMALL_BANDIT = {
     "width": 40,
     "height": 48,
-    "max_health": 30,
+    "max_health": 15,
     "attack_damage": 5,
     "defense": 2,
     "level": 1,
@@ -71,7 +73,7 @@ SMALL_BANDIT = {
 LARGE_BANDIT = {
     "width": 56,
     "height": 56,
-    "max_health": 60,
+    "max_health": 40,
     "attack_damage": 10,
     "defense": 4,
     "level": 6,
@@ -97,67 +99,6 @@ EXPERIENCE = {
     
     # Starting exp for each level (roughly)
     "exp_curve": 100,  # Each level needs this much more exp
-}
-
-# =============================================================================
-# COMBO SYSTEM - NOTE BASED
-# =============================================================================
-# Combos are based on actual music notes
-# Q = Quarter note (1/4 beat)
-# E = Eighth note (1/8 beat) - need 2 to make a beat
-# Each pattern is a sequence of note types
-
-COMBOS = {
-    "normal": {
-        "pattern": ["Q", "Q", "Q", "Q"],  # Quarter Quarter Quarter Quarter
-        "damage_multiplier": 1.2,
-        "name": "Blade Dance",
-        "animation": "downslash_spin_downslash_upslash",  # Down, spin side, down, up
-        "final_knockback": {"x": 0, "y": -25, "major": True},  # Upward launch
-        "description": "Downslash → Spin Slash → Downslash → Upward Slash"
-    },
-    
-    "fast": {
-        "pattern": ["Q", "Q", "E", "E", "E", "E"],  # Quarter Quarter Eighth Eighth Eighth Eighth
-        "damage_multiplier": 1.5,
-        "name": "Rapid Strike",
-        "animation": "downslash_spin_stab_stab_stab_heavystab",
-        "final_knockback": {"x": 30, "y": -5, "major": True},  # Backward launch
-        "description": "Downslash → Spin → Stabs → Heavy Stab"
-    },
-    
-    "heavy": {
-        "pattern": ["Q", "Q", "H"],  # Quarter Quarter Half (hold)
-        "damage_multiplier": 2.5,
-        "name": "Mana Burst",
-        "animation": "downslash_spin_charge_aoe",
-        "aoe_range": 300,  # 300 pixel AOE
-        "mana_cost": 20,  # Costs mana to use
-        "final_knockback": {"x": 0, "y": -15, "major": True},  # AOE knockback
-        "description": "Downslash → Spin → Charged AOE Slash"
-    },
-}
-
-# Enemy combo patterns (same note system)
-ENEMY_COMBOS = {
-    "standard": {
-        "pattern": ["Q", "Q", "E", "E"],  # Quarter, quarter, eighth eighth
-    },
-    
-    "fast_attack": {
-        "pattern": ["E", "E", "E", "E"],  # All eighths
-    },
-}
-
-COMBO_BALANCE = {
-    # Wrong combo punishment
-    "wrong_combo_mana_loss": 5,
-    "wrong_combo_knockback": {"x": 10, "y": -8},
-    "wrong_combo_stun": 0.0,  # No stun on wrong combo
-    
-    # Valid combo reward
-    "combo_hit_stuns_enemies": True,  # Player hits stun enemies
-    "combo_stun_duration": 0.3,
 }
 
 # =============================================================================

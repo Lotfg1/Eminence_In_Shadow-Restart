@@ -95,56 +95,60 @@ def load_level():
 
         # Generate platforms (Option 2: controlled density)
         segment_platforms = []
-        platform_count = random.randint(0, MAX_PLATFORMS_PER_SEGMENT)
+        if index != 0:  # Keep spawn segment empty of platforms
+            platform_count = random.randint(0, MAX_PLATFORMS_PER_SEGMENT)
 
-        for _ in range(platform_count):
-            # maximum width the platform can have given the margins
-            max_platform_width = SEGMENT_WIDTH - 200 - 200
-            if max_platform_width < 200:
-                break  # cannot place any platform in this segment
+            for _ in range(platform_count):
+                # maximum width the platform can have given the margins
+                max_platform_width = SEGMENT_WIDTH - 200 - 200
+                if max_platform_width < 200:
+                    break  # cannot place any platform in this segment
 
-            w = random.randint(200, min(400, max_platform_width))
-            x_min = 200
-            x_max = SEGMENT_WIDTH - w - 200
+                w = random.randint(200, min(400, max_platform_width))
+                x_min = 200
+                x_max = SEGMENT_WIDTH - w - 200
 
-            if x_max >= x_min:
-                x = segment_x + random.randint(x_min, x_max)
-                y = current_ground_y - random.randint(220, 320)
-                segment_platforms.append(pygame.Rect(x, y, w, 16))
-            # if x_max < x_min, skip this platform
+                if x_max >= x_min:
+                    x = segment_x + random.randint(x_min, x_max)
+                    y = current_ground_y - random.randint(220, 320)
+                    segment_platforms.append(pygame.Rect(x, y, w, 16))
+                # if x_max < x_min, skip this platform
+
         # Generate natural occurrences
         segment_natural = []
         segment_tents = []
         segment_rocks = []
         segment_interactables = []
 
-        # MERCHANT - Rare spawn with cooldown
-        if (index - last_merchant_segment) >= MERCHANT_COOLDOWN:
-            if random.random() < MERCHANT_CHANCE:
-                merchant_x = segment_x + random.randint(200, SEGMENT_WIDTH - 200)
-                merchant = Merchant(merchant_x, current_ground_y - 48)
-                segment_interactables.append(merchant)
-                last_merchant_segment = index
+        if index != 0:  # No spawns in the spawn segment
+            # MERCHANT - Rare spawn with cooldown
+            if (index - last_merchant_segment) >= MERCHANT_COOLDOWN:
+                if random.random() < MERCHANT_CHANCE:
+                    merchant_x = segment_x + random.randint(200, SEGMENT_WIDTH - 200)
+                    merchant = Merchant(merchant_x, current_ground_y - 48)
+                    segment_interactables.append(merchant)
+                    last_merchant_segment = index
 
-        # TENTS - Large sloped polygons (must NOT spawn under platforms)
-        if random.random() < TENT_CHANCE:
-            tent_x = segment_x + random.randint(150, SEGMENT_WIDTH - 350)
-            tent_width = 200  # adjust to Tent actual width if needed
-            if not platform_above_x(segment_platforms, tent_x, tent_width, current_ground_y):
-                tent = Tent(tent_x, current_ground_y)
-                segment_tents.append(tent)
-                segment_natural.append(tent)
+            # TENTS - Large sloped polygons (must NOT spawn under platforms)
+            if random.random() < TENT_CHANCE:
+                tent_x = segment_x + random.randint(150, SEGMENT_WIDTH - 350)
+                tent_width = 200  # adjust to Tent actual width if needed
+                if not platform_above_x(segment_platforms, tent_x, tent_width, current_ground_y):
+                    tent = Tent(tent_x, current_ground_y)
+                    segment_tents.append(tent)
+                    segment_natural.append(tent)
+                    segment_interactables.append(tent)
 
-        # ROCKS - Small sloped polygons
-        if random.random() < ROCK_CHANCE:
-            rock_x = segment_x + random.randint(100, SEGMENT_WIDTH - 200)
-            rock = Rock(rock_x, current_ground_y)
-            segment_rocks.append(rock)
-            segment_natural.append(rock)
+            # ROCKS - Small sloped polygons
+            if random.random() < ROCK_CHANCE:
+                rock_x = segment_x + random.randint(100, SEGMENT_WIDTH - 200)
+                rock = Rock(rock_x, current_ground_y)
+                segment_rocks.append(rock)
+                segment_natural.append(rock)
         
         # ENEMIES - Spawn groups of 2-4 bandits
         segment_enemies = []
-        if random.random() < ENEMY_CHANCE:
+        if index != 0 and random.random() < ENEMY_CHANCE:
             num_enemies = random.randint(2, 4)
             for i in range(num_enemies):
                 enemy_x = segment_x + random.randint(150, SEGMENT_WIDTH - 150)
@@ -196,5 +200,5 @@ def load_level():
         "player_start": player_start,
         "infinite": True,
         "level_id": "dark_forest",
-        "music": "battle_theme"
+        "music_category": "dark_forest"
     }

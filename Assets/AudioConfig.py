@@ -8,6 +8,8 @@ The game will automatically play them and display the beat counter.
 
 import pygame
 import time
+import os
+import random
 
 class Song:
     """Represents a song with rhythm information"""
@@ -47,8 +49,8 @@ class Song:
     
     @property
     def seconds_per_beat(self):
-        """Calculate beat timing based on BPM"""
-        return 60.0 / self.bpm
+        """Calculate beat timing based on BPM - quarter notes"""
+        return 60.0 / self.bpm  # Standard quarter note timing
     
     def _detect_bpm(self, filepath):
         """Automatically detect BPM from audio file"""
@@ -127,20 +129,23 @@ SONGS = {
 }
 
 # =============================================================================
-# BEAT COUNTER DISPLAY CONFIGURATION - EASY TO EDIT!
+# TIME SIGNATURE COUNTER DISPLAY CONFIGURATION - EASY TO EDIT!
 # =============================================================================
 
-BEAT_COUNTER_CONFIG = {
-    "enabled": True,              # Show beat counter? True/False
+TIME_SIGNATURE_COUNTER_CONFIG = {
+    "enabled": True,              # Show time signature counter? True/False
     "position": "bottom_right",   # Options: "bottom_right", "bottom_left", "top_right", "top_left", "center"
     "offset_x": 20,               # Distance from edge (pixels)
     "offset_y": 20,               # Distance from edge (pixels)
     "font_size": 48,              # Size of beat numbers
     "color": (255, 255, 255),     # Color (R, G, B) - white by default
     "highlight_color": (255, 215, 0),  # Color for current beat - gold by default
-    "show_bpm": True,             # Show BPM info? True/False
-    "show_time_sig": True,        # Show time signature? True/False
+    # Counter increments: if BPM > 160, count every 2 beats; else every 1 beat
 }
+
+def get_beat_increment(bpm):
+    """Returns beat increment: 1 for <= 160 BPM, 2 for > 160 BPM"""
+    return 2 if bpm > 160 else 1
 
 # =============================================================================
 # AUDIO SYSTEM CLASS - Handles playback and beat tracking
@@ -152,7 +157,7 @@ class AudioSystem:
     def __init__(self):
         pygame.mixer.init()
         self.current_song = None
-        self.font = pygame.font.SysFont(None, BEAT_COUNTER_CONFIG["font_size"])
+        self.font = pygame.font.SysFont(None, TIME_SIGNATURE_COUNTER_CONFIG["font_size"])
         self.info_font = pygame.font.SysFont(None, 24)
     
     def play_song(self, song_id):
@@ -169,7 +174,7 @@ class AudioSystem:
             song.is_playing = True
             song.start_time = time.time()
             song.last_beat_time = song.start_time
-            song.current_beat = 1
+            song.current_beat = 0  # Start at 0, will increment to 1 on first beat
             self.current_song = song
             return True
         except:
@@ -198,18 +203,50 @@ class AudioSystem:
                 self.current_song.current_beat = 1
             self.current_song.last_beat_time = current_time
     
-    def draw_beat_counter(self, screen, current_level_id=None):
-        """Draw the beat counter on screen
+    def get_nearest_beat_time(self):
+        """Get the timestamp of the nearest beat (past or future)"""
+        if not self.current_song or not self.current_song.is_playing:
+            return time.time()
+        
+        current_time = time.time()
+        elapsed = current_time - self.current_song.last_beat_time
+        next_beat_time = self.current_song.last_beat_time + self.current_song.seconds_per_beat
+        
+        # If we're closer to the last beat, return that; otherwise next beat
+        if elapsed < self.current_song.seconds_per_beat / 2:
+            return self.current_song.last_beat_time
+        else:
+            return next_beat_time
+    
+    @property
+    def beat_progress(self):
+        """Get progress to next beat (0.0 to 1.0)"""
+        if not self.current_song or not self.current_song.is_playing:
+            return 0.0
+        
+        current_time = time.time()
+        elapsed = current_time - self.current_song.last_beat_time
+        return min(1.0, elapsed / self.current_song.seconds_per_beat)
+    
+    @property
+    def current_beat(self):
+        """Get current beat number"""
+        if not self.current_song:
+            return 1
+        return self.current_song.current_beat
+    
+    def draw_time_signature_counter(self, screen, display_beat, beat_increment=1):
+        """Draw the time signature counter on screen
+        
+        Shows a simple beat count based on time signature.
+        If BPM > 160, counter increments every 2 beats; else every 1 beat.
         
         Args:
             screen: Surface to draw on
-            current_level_id: Current level identifier (only show BPM in dark_forest)
+            display_beat: Current display beat number
+            beat_increment: How much to increment per beat (1 or 2)
         """
-        if not BEAT_COUNTER_CONFIG["enabled"]:
-            return
-        
-        # Only show beat counter in dark forest
-        if current_level_id != "dark_forest":
+        if not TIME_SIGNATURE_COUNTER_CONFIG["enabled"]:
             return
         
         if not self.current_song or not self.current_song.is_playing:
@@ -218,53 +255,34 @@ class AudioSystem:
         song = self.current_song
         
         # Calculate position
-        pos_x, pos_y = self._get_position(screen)
+        pos_x, pos_y = self._get_time_sig_position(screen)
         
-        # Draw beat numbers (e.g., "1 2 3 4" with current beat highlighted)
-        beat_text = ""
-        for i in range(1, song.time_signature_beats + 1):
-            beat_text += str(i) + " "
-        
-        # Draw all beats
-        y_offset = 0
-        for i in range(1, song.time_signature_beats + 1):
-            color = BEAT_COUNTER_CONFIG["highlight_color"] if i == song.current_beat else BEAT_COUNTER_CONFIG["color"]
-            beat_surface = self.font.render(str(i), True, color)
-            screen.blit(beat_surface, (pos_x + (i - 1) * 40, pos_y + y_offset))
-        
-        # Draw BPM info
-        if BEAT_COUNTER_CONFIG["show_bpm"]:
-            bpm_text = f"BPM: {song.bpm}"
-            bpm_surface = self.info_font.render(bpm_text, True, (200, 200, 200))
-            screen.blit(bpm_surface, (pos_x, pos_y - 30))
-        
-        # Draw time signature
-        if BEAT_COUNTER_CONFIG["show_time_sig"]:
-            sig_text = f"{song.time_signature_beats}/{song.time_signature_note}"
-            sig_surface = self.info_font.render(sig_text, True, (200, 200, 200))
-            screen.blit(sig_surface, (pos_x + 150, pos_y - 30))
+        # Draw main beat number (large)
+        color = TIME_SIGNATURE_COUNTER_CONFIG["highlight_color"]
+        beat_surface = self.font.render(str(display_beat % 5), True, color)
+        screen.blit(beat_surface, (pos_x, pos_y))
     
-    def _get_position(self, screen):
-        """Calculate beat counter position based on config"""
+    def _get_time_sig_position(self, screen):
+        """Calculate time signature counter position based on config"""
         screen_w = screen.get_width()
         screen_h = screen.get_height()
-        offset_x = BEAT_COUNTER_CONFIG["offset_x"]
-        offset_y = BEAT_COUNTER_CONFIG["offset_y"]
+        offset_x = TIME_SIGNATURE_COUNTER_CONFIG["offset_x"]
+        offset_y = TIME_SIGNATURE_COUNTER_CONFIG["offset_y"]
         
-        position = BEAT_COUNTER_CONFIG["position"]
+        position = TIME_SIGNATURE_COUNTER_CONFIG["position"]
         
         if position == "bottom_right":
-            return (screen_w - 200 - offset_x, screen_h - 80 - offset_y)
+            return (screen_w - 100 - offset_x, screen_h - 80 - offset_y)
         elif position == "bottom_left":
             return (offset_x, screen_h - 80 - offset_y)
         elif position == "top_right":
-            return (screen_w - 200 - offset_x, offset_y)
+            return (screen_w - 100 - offset_x, offset_y)
         elif position == "top_left":
             return (offset_x, offset_y)
         elif position == "center":
-            return (screen_w // 2 - 100, screen_h // 2)
+            return (screen_w // 2 - 50, screen_h // 2)
         else:
-            return (screen_w - 200 - offset_x, screen_h - 80 - offset_y)  # Default to bottom right
+            return (screen_w - 100 - offset_x, screen_h - 80 - offset_y)
 
 # =============================================================================
 # USAGE EXAMPLE
@@ -272,13 +290,15 @@ class AudioSystem:
 """
 In your main game file:
 
-from Assets.AudioConfig import AudioSystem
+from Assets.AudioConfig import AudioSystem, MusicManager
 
 # Initialize
 audio_system = AudioSystem()
+music_manager = MusicManager()
 
-# In game start or level load
-audio_system.play_song("battle_theme")
+# Get random song for a level
+song_id = music_manager.get_random_song("dark_forest")
+audio_system.play_song(song_id)
 
 # In your game update loop
 audio_system.update()
@@ -289,3 +309,99 @@ audio_system.draw_beat_counter(screen)
 # To stop music
 audio_system.stop_song()
 """
+
+
+# ============================================================================
+# MUSIC MANAGER - Handle song selection per level
+# ============================================================================
+
+class MusicManager:
+    """Manages song selection and organization by level"""
+    
+    # Level to music folder mappings
+    LEVEL_MUSIC_FOLDERS = {
+        "dark_forest": "Assets/Music/Dark_Forest",
+        "city": "Assets/Music/City",
+        "player_room": "Assets/Music/Player_Room",
+        "start_menu": "Assets/Music/Start_Menu",
+    }
+    
+    # Cache of loaded songs per level
+    _music_cache = {}
+    
+    # Level to song ID mappings - all songs per level
+    LEVEL_MUSIC = {
+        "dark_forest": ["battle_theme"],
+        "city": ["city_theme"],
+        "player_room": ["calm_theme"],
+        "start_menu": ["menu_theme"],
+    }
+    
+    # Default fallback songs
+    DEFAULT_MUSIC = {
+        "menu": "menu_theme",
+        "combat": "battle_theme",
+        "exploration": "city_theme",
+    }
+    
+    @staticmethod
+    def _get_music_files_from_folder(folder_path):
+        """Get all music files from a folder"""
+        audio_extensions = {'.mp3', '.wav', '.ogg', '.flac'}
+        music_files = []
+        
+        try:
+            if os.path.exists(folder_path):
+                for filename in os.listdir(folder_path):
+                    if os.path.splitext(filename)[1].lower() in audio_extensions:
+                        full_path = os.path.join(folder_path, filename)
+                        music_files.append(full_path)
+        except Exception as e:
+            print(f"Error reading music folder {folder_path}: {e}")
+        
+        return music_files
+    
+    @staticmethod
+    def get_random_song_from_level(level_id):
+        """Get a random song file from the level's music folder"""
+        # Check cache first
+        if level_id in MusicManager._music_cache:
+            files = MusicManager._music_cache[level_id]
+            if files:
+                return random.choice(files)
+        
+        # Get folder path for this level
+        folder_path = MusicManager.LEVEL_MUSIC_FOLDERS.get(level_id, "Assets/Music")
+        
+        # Get all music files from the folder
+        music_files = MusicManager._get_music_files_from_folder(folder_path)
+        
+        # Cache the results
+        MusicManager._music_cache[level_id] = music_files
+        
+        # Return a random file, or fallback
+        if music_files:
+            return random.choice(music_files)
+        else:
+            # Fallback to old system if folder doesn't exist
+            return MusicManager.get_random_song(level_id)
+    
+    @staticmethod
+    def get_random_song(level_name):
+        """Get a random song for the given level"""
+        songs = MusicManager.LEVEL_MUSIC.get(level_name, [MusicManager.DEFAULT_MUSIC["exploration"]])
+        return random.choice(songs) if songs else MusicManager.DEFAULT_MUSIC["exploration"]
+    
+    @staticmethod
+    def get_song_for_level(level_name):
+        """Get the primary song for a level (first in list)"""
+        songs = MusicManager.LEVEL_MUSIC.get(level_name)
+        return songs[0] if songs else MusicManager.DEFAULT_MUSIC["exploration"]
+    
+    @staticmethod
+    def add_level_music(level_name, song_id):
+        """Add a song ID to a level's music pool"""
+        if level_name not in MusicManager.LEVEL_MUSIC:
+            MusicManager.LEVEL_MUSIC[level_name] = []
+        if song_id not in MusicManager.LEVEL_MUSIC[level_name]:
+            MusicManager.LEVEL_MUSIC[level_name].append(song_id)

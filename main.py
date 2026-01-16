@@ -1,8 +1,7 @@
 # ============================================================================
 # EMINENCE IN SHADOW - RESTART
 # ============================================================================
-# A rhythm-based 2D action game where you attack on musical beats to deal
-# extra damage and unlock powerful combos.
+# A simple 2D platformer game.
 #
 # Main flow:
 #  1. Config class: All game settings in one place
@@ -12,18 +11,21 @@
 #  5. run(): Main loop that ties it all together
 #
 # ============================================================================
-
 import pygame
 import sys
 import time
 import math
 import random
+import json
 import importlib.util
+import os
+import numpy as np
 from Assets.Settings import Settings
 from Assets.Characters import MainCharacter
 from Assets.Menus import StartMenu, PauseMenu, MerchantMenu, TravelMenu, SettingsMenu, StatusMenu
-from Assets.AudioConfig import AudioSystem
-from Assets.ComboConfig import COMBO_CONFIG
+from Assets.AudioConfig import AudioSystem, MusicManager
+from Assets.RhythmBattle import RhythmBattleSystem
+from Assets.AttackConfig import AttackConfig
 
 # ==================== CONFIGURATION ====================
 class Config:
@@ -32,7 +34,7 @@ class Config:
     SCREEN_WIDTH = 1080
     SCREEN_HEIGHT = 920
     FPS = 60
-    WINDOW_TITLE = "Eminence in Shadow"
+    WINDOW_TITLE = "Eminence in Shadow: Restart"
     
     # Visual Settings
     ZOOM_SCALE = 1.5
@@ -42,7 +44,7 @@ class Config:
     LOOK_AHEAD_MAX = 90
     LOOK_AHEAD_ACCEL = 6
     LOOK_AHEAD_RETURN = 8
-    CAMERA_SMOOTHING = 0.12
+    CAMERA_SMOOTHING = 0.25  # Faster camera response to knockback
     
     # Level
     SEGMENT_WIDTH = 768
@@ -57,7 +59,7 @@ class Config:
     MAX_FALL_SPEED = 12
     
     # Interaction
-    INTERACTION_BOX_INFLATE = (40, 20)
+    INTERACTION_BOX_INFLATE = (80, 40)
     ICON_OFFSET_Y = 25  # How far above object to show icon
     
     # Transition
@@ -119,9 +121,6 @@ class Config:
     COIN_IMAGE_PATH = "Assets/Photos/Coin.png"
     COIN_ANIMATION_PATH = "Assets/Animations/Coin.gif"
     SETTINGS_PATH = "Assets/settings.json"
-    
-    # Attack Keybind (if not in settings file)
-    DEFAULT_ATTACK_KEY = pygame.K_SPACE
 
 # GAME CLASS
 class Game:
@@ -140,39 +139,46 @@ class Game:
         
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont(None, 32)
+        self.font_large = pygame.font.SysFont(None, 48)
         self.timer_font = pygame.font.SysFont(None, 48)
 
         # Player
         self.player = MainCharacter()
         self.saved_y_momentum = 0  # Store y_momentum when menu opens
+        
+        # Frame counter
+        self.frame_counter = 0
 
-        # Camera - adjusted for 2x zoom
+        # Camera - adjusted for zoom
         self.camera_x = 0
         self.camera_y = 0
         self.look_offset_x = 0
+        
+        # Jump cooldown (frame-based instead of time.sleep)
+        self.jump_cooldown = 0
+        self.jump_cooldown_max = 12  # 12 frames = 0.2 seconds at 60 FPS
 
         # Level management
         self.level_files = self.config.LEVEL_PATHS
         self.current_level_index = 0
         self.level_data = {}
         
-        # Drops (flying loot on enemy death) - Must be initialized before load_level!
+        # Drops (flying loot on enemy death)
         self.drops = []
         
-        # Audio system with metronome - Must be initialized before load_level!
+        # Audio system - simple background music
         self.audio_system = AudioSystem()
-        # Start with menu theme (will change when level loads)
+        # Start with menu theme
         self.audio_system.play_song("menu_theme")
+        
+        # Rhythm battle system
+        self.rhythm_system = RhythmBattleSystem(self.audio_system)
         
         # Load the starting level
         self.load_level(self.level_files[self.current_level_index])
 
         # Settings and menus
         self.settings = Settings(self.config.SETTINGS_PATH)
-        # Ensure attack key exists in keybinds
-        if "Attack" not in self.settings.keybinds:
-            self.settings.keybinds["Attack"] = self.config.DEFAULT_ATTACK_KEY
-            self.settings.save()
         # Ensure zoom level exists
         if "zoom_level" not in self.settings.display:
             self.settings.display["zoom_level"] = self.config.ZOOM_SCALE
@@ -197,12 +203,6 @@ class Game:
         self.go_back_fade_alpha = 0
         self.go_back_start_pos = (0, 0)  # Store player position when timer starts
         
-        # Bed fade system
-        self.bed_fade_active = False
-        self.bed_fade_phase = None  # None, "fade_out", "text", "fade_in"
-        self.bed_fade_alpha = 0
-        self.bed_fade_text_timer = 0
-        
         # Load images if enabled
         self.images = {}
         if self.config.USE_IMAGES:
@@ -223,40 +223,56 @@ class Game:
             print("Warning: Some images could not be loaded, falling back to rectangles")
             self.config.USE_IMAGES = False
     
+    def draw_text_with_shadow(self, text, font, color, x, y, shadow_offset=2):
+        """Draw text with a shadow for better readability"""
+        # Draw shadow
+        shadow_surface = font.render(text, True, (0, 0, 0))
+        self.screen.blit(shadow_surface, (x + shadow_offset, y + shadow_offset))
+        # Draw main text
+        text_surface = font.render(text, True, color)
+        self.screen.blit(text_surface, (x, y))
+        return text_surface
+    
     def apply_zoom(self, zoom_level):
-        """Apply zoom level to screen"""
-        self.config.ZOOM_SCALE = zoom_level
-        internal_width = int(self.config.SCREEN_WIDTH / zoom_level)
-        internal_height = int(self.config.SCREEN_HEIGHT / zoom_level)
-        self.screen = pygame.Surface((internal_width, internal_height))
-        # Reinitialize transition surface
-        self._initialize_transition()
+        """Smoothly transition to zoom level"""
+        # Store target zoom instead of applying immediately
+        if not hasattr(self, 'target_zoom'):
+            self.target_zoom = self.config.ZOOM_SCALE
+            self.zoom_speed = 0.01  # Very slow smooth zoom
+        
+        self.target_zoom = zoom_level
 
     def _initialize_menus(self):
         """Initialize all menu objects"""
+        from Assets.Menus import KeyBindsMenu
         self.menus = {
             "start": StartMenu(self.font),
             "pause": PauseMenu(self.font, self.screen.get_width()),
             "merchant": MerchantMenu(self.font),
             "settings": SettingsMenu(self.font, self.settings, self.config),
-            "status": StatusMenu(self.font, self.player)
+            "status": StatusMenu(self.font, self.player),
+            "keybinds": KeyBindsMenu(self.font, self.settings)
         }
         self.active_menu = "start"
         self.travel_menu = None
         self.pause_player_physics()
-
+    
     def _initialize_transition(self):
         """Initialize transition system"""
         self.transitioning = False
         self.transition_radius = 0
         self.transition_phase = None
         self.transition_target = None
+        self.transition_destination_name = ""
+        self.destination_fade_alpha = 255
         # Use internal screen size for transition (calculated dynamically)
         internal_width = int(self.config.SCREEN_WIDTH / self.config.ZOOM_SCALE)
         internal_height = int(self.config.SCREEN_HEIGHT / self.config.ZOOM_SCALE)
         self.transition_max = int((internal_width ** 2 + internal_height ** 2) ** 0.5)
         self.transition_surface = pygame.Surface((internal_width, internal_height))
         self.transition_surface.set_colorkey(self.config.COLOR_COLORKEY)
+        # Load travel sound
+        self.travel_sound = pygame.mixer.Sound("Assets/Music/SFXs/Travel_noise.mp3")
 
     # ==================== LEVEL MANAGEMENT ====================
     def load_level(self, filepath):
@@ -287,9 +303,72 @@ class Game:
         self.drops.clear()
         
         # Change music based on level
-        level_music = self.level_data.get("music", "battle_theme")
-        if not self.audio_system.current_song or self.audio_system.current_song.name != level_music:
+        level_id = self.level_data.get("level_id", "exploration")
+        level_music = MusicManager.get_random_song_from_level(level_id)
+        
+        # Use the song ID system
+        try:
             self.audio_system.play_song(level_music)
+        except Exception as e:
+            print(f"Error loading music: {e}")
+            # Fallback to menu theme if song fails to load
+            self.audio_system.play_song("menu_theme")
+    
+    def save_game(self):
+        """Save current game state to a JSON file"""
+        save_data = {
+            "player": {
+                "position": [self.player.rect.x, self.player.rect.y],
+                "level": self.player.level,
+                "exp": self.player.experience,
+                "exp_for_next_level": self.player.exp_for_next_level,
+                "stats": self.player.stats.copy()
+            },
+            "current_level_index": self.current_level_index,
+            "current_level": self.level_files[self.current_level_index]
+        }
+        
+        try:
+            with open("save_data.json", "w") as f:
+                json.dump(save_data, f, indent=2)
+            print("Game saved successfully!")
+            return True
+        except Exception as e:
+            print(f"Error saving game: {e}")
+            return False
+    
+    def load_game(self):
+        """Load game state from save file"""
+        try:
+            with open("save_data.json", "r") as f:
+                save_data = json.load(f)
+            
+            # Load player data
+            player_data = save_data["player"]
+            self.player.level = player_data["level"]
+            self.player.experience = player_data["exp"]
+            self.player.exp_for_next_level = player_data["exp_for_next_level"]
+            self.player.stats = player_data["stats"].copy()
+            
+            # Load level
+            level_index = save_data["current_level_index"]
+            if level_index < len(self.level_files):
+                self.current_level_index = level_index
+                self.load_level(self.level_files[self.current_level_index])
+                # Set player position after level load
+                self.player.rect.x, self.player.rect.y = player_data["position"]
+
+            # After loading, ensure nothing spawns too close to player
+            self._prune_spawn_safe_radius(500)
+            
+            print("Game loaded successfully!")
+            return True
+        except FileNotFoundError:
+            print("No save file found.")
+            return False
+        except Exception as e:
+            print(f"Error loading game: {e}")
+            return False
 
     def get_collision_rects(self):
         """Get list of all solid objects player can collide with"""
@@ -319,30 +398,9 @@ class Game:
         internal_width = int(self.config.SCREEN_WIDTH / self.config.ZOOM_SCALE)
         internal_height = int(self.config.SCREEN_HEIGHT / self.config.ZOOM_SCALE)
         
-        # Check if player is in a combo - focus camera between player and enemy
-        if self.player.combo_tracker.in_combo:
-            # Find the nearest enemy for exciting camera focus
-            nearest_enemy = None
-            nearest_distance = float('inf')
-            for enemy in self.level_data.get("enemies", []):
-                distance = abs(enemy.rect.centerx - self.player.rect.centerx)
-                if distance < nearest_distance:
-                    nearest_distance = distance
-                    nearest_enemy = enemy
-            
-            # If found, focus camera between player and enemy
-            if nearest_enemy:
-                midpoint_x = (self.player.rect.centerx + nearest_enemy.rect.centerx) // 2
-                target_x = midpoint_x - (internal_width // 2)
-                target_y = self.player.rect.centery - (internal_height // 2)
-            else:
-                # No enemy found, fall back to player-centered
-                target_x = self.player.rect.centerx - (internal_width // 2)
-                target_y = self.player.rect.centery - (internal_height // 2)
-        else:
-            # Normal behavior: center camera on player
-            target_x = self.player.rect.centerx - (internal_width // 2)
-            target_y = self.player.rect.centery - (internal_height // 2)
+        # Always center camera on player (even during combos)
+        target_x = self.player.rect.centerx - (internal_width // 2)
+        target_y = self.player.rect.centery - (internal_height // 2)
         
         keys = pygame.key.get_pressed()
         
@@ -413,23 +471,72 @@ class Game:
         # Check each interactable object in the level
         for obj in self.level_data.get("interactables", []):
             if box.colliderect(obj.rect):  # If player touches it
-                # If it's a level transition, open travel menu
-                if hasattr(obj, "destination_index"):
-                    self.open_travel_menu()
-                # Otherwise call its interact function
-                elif hasattr(obj, "interact"):
+                # Call the object's interact function
+                if hasattr(obj, "interact"):
                     obj.interact(self.player, self)
+    
+    
+    def _prune_spawn_safe_radius(self, radius=500):
+        """Remove spawned objects that are too close to the player (future segments only)."""
+        px = self.player.rect.centerx
+        player_seg = px // self.config.SEGMENT_WIDTH
 
-    def open_travel_menu(self):
-        """Open the travel menu with available destinations"""
-        destinations = [
-            (lvl.split("/")[-1].replace(".py", "").replace("_", " "), i)
-            for i, lvl in enumerate(self.level_files)
-            if i != self.current_level_index
-        ]
-        self.travel_menu = TravelMenu(self.font, destinations)
-        self.pause_player_physics()
-        self.active_menu = "travel"
+        def keep_obj(obj):
+            # Always keep level blockers
+            if hasattr(obj, "destination_index"):
+                return True
+            cx = None
+            if hasattr(obj, "rect"):
+                cx = obj.rect.centerx
+            elif isinstance(obj, pygame.Rect):
+                cx = obj.centerx
+            if cx is None:
+                return True
+            # Keep everything in the player's current segment
+            obj_seg = cx // self.config.SEGMENT_WIDTH
+            if obj_seg == player_seg:
+                return True
+            # Remove only if within the safety radius
+            return abs(cx - px) > radius
+
+        # Filter global lists
+        for key in ["platforms", "natural_objects", "tents", "rocks", "enemies", "interactables"]:
+            if key in self.level_data:
+                self.level_data[key] = [o for o in self.level_data[key] if keep_obj(o)]
+
+        # Filter per-segment lists to keep future lookups consistent
+        if "segments" in self.level_data:
+            for seg in self.level_data["segments"].values():
+                for key in ["platforms", "natural_objects", "tents", "rocks", "interactables", "enemies"]:
+                    if key in seg:
+                        seg[key] = [o for o in seg[key] if keep_obj(o)]
+
+    def _clear_first_segment_objects(self):
+        """Remove objects from the first segment (segment index 0) except blockers/walls."""
+        def in_first_seg(obj):
+            cx = None
+            if hasattr(obj, "rect"):
+                cx = obj.rect.centerx
+            elif isinstance(obj, pygame.Rect):
+                cx = obj.centerx
+            if cx is None:
+                return False
+            return (cx // self.config.SEGMENT_WIDTH) == 0
+
+        def keep_obj(obj):
+            if hasattr(obj, "destination_index"):
+                return True
+            return not in_first_seg(obj)
+
+        for key in ["platforms", "natural_objects", "tents", "rocks", "enemies", "interactables"]:
+            if key in self.level_data:
+                self.level_data[key] = [o for o in self.level_data[key] if keep_obj(o)]
+
+        if "segments" in self.level_data and 0 in self.level_data["segments"]:
+            seg = self.level_data["segments"][0]
+            for key in ["platforms", "natural_objects", "tents", "rocks", "interactables", "enemies"]:
+                if key in seg:
+                    seg[key] = [o for o in seg[key] if keep_obj(o)]
 
     def get_nearby_interactables(self):
         """Get all interactables near the player"""
@@ -482,9 +589,27 @@ class Game:
             self.resume_player_physics()
             self.active_menu = None
             self.previous_menu = None
+        elif result == "continue":
+            # Load saved game
+            if self.load_game():
+                self.resume_player_physics()
+                self.active_menu = None
+                self.previous_menu = None
+            else:
+                # If load fails, just start new game
+                self.resume_player_physics()
+                self.active_menu = None
+                self.previous_menu = None
+        elif result == "save_game":
+            # Save the game
+            self.save_game()
+            # Stay in pause menu
         elif result == "settings":
             self.previous_menu = self.active_menu
             self.active_menu = "settings"
+        elif result == "keybinds":
+            self.previous_menu = self.active_menu
+            self.active_menu = "keybinds"
         elif result == "Status":
             self.previous_menu = self.active_menu
             self.active_menu = "status"
@@ -511,14 +636,22 @@ class Game:
         if not self.go_back_active:
             return
         
-        # Check if player has moved to cancel timer
-        if not self.go_back_fade_phase:
-            distance_moved = ((self.player.rect.x - self.go_back_start_pos[0]) ** 2 + 
-                            (self.player.rect.y - self.go_back_start_pos[1]) ** 2) ** 0.5
-            if distance_moved > self.config.GO_BACK_CANCEL_DISTANCE:
-                self.go_back_active = False
-                self.go_back_timer = 0
-                return
+        # Check if player has moved to cancel timer (allow movement anytime)
+        distance_moved = ((self.player.rect.x - self.go_back_start_pos[0]) ** 2 + 
+                        (self.player.rect.y - self.go_back_start_pos[1]) ** 2) ** 0.5
+        if distance_moved > self.config.GO_BACK_CANCEL_DISTANCE:
+            self.go_back_active = False
+            self.go_back_timer = 0
+            self.go_back_fade_phase = None
+            return
+        
+        # Check if any enemy is in combo state (attacking) - cancel timer
+        any_enemy_in_combo = any(getattr(e, "combo_state", 0) > 0 for e in self.level_data.get("enemies", []))
+        if any_enemy_in_combo:
+            self.go_back_active = False
+            self.go_back_timer = 0
+            self.go_back_fade_phase = None
+            return
         
         # Handle fade phases
         if self.go_back_fade_phase == "fade_out":
@@ -553,6 +686,16 @@ class Game:
         self.transition_phase = "expand"
         self.transition_radius = 0
         self.transition_target = target_level_index
+        # Get destination name from file path
+        filepath = self.level_files[target_level_index]
+        level_name = filepath.split('/')[-1].replace('.py', '')
+        self.transition_destination_name = level_name.replace("_", " ")
+        self.destination_fade_alpha = 255
+        # Play travel sound
+        try:
+            self.travel_sound.play()
+        except:
+            pass  # Sound file might not load, continue anyway
 
     def update_transition(self):
         """Update transition animation"""
@@ -569,36 +712,32 @@ class Game:
         elif self.transition_phase == "collapse":
             self.transition_radius -= self.config.TRANSITION_SPEED
             if self.transition_radius <= 0:
+                self.transition_phase = "show_destination"
+                self.destination_fade_alpha = 255
+        
+        elif self.transition_phase == "show_destination":
+            # Fade out destination text
+            self.destination_fade_alpha -= 300 * (1.0 / self.config.FPS)  # Fade over ~1.7 seconds
+            if self.destination_fade_alpha <= 0:
                 self.transitioning = False
                 self.transition_phase = None
+                self.destination_fade_alpha = 0
 
     def update_bed_fade(self, dt):
-        """Update bed fade animation"""
-        fade_speed = 300  # Alpha change per second
-        
-        if self.bed_fade_phase == "fade_out":
-            self.bed_fade_alpha += fade_speed * dt
-            if self.bed_fade_alpha >= 255:
-                self.bed_fade_alpha = 255
-                self.bed_fade_phase = "text"
-                self.bed_fade_text_timer = 2.0  # Show text for 2 seconds
-        
-        elif self.bed_fade_phase == "text":
-            self.bed_fade_text_timer -= dt
-            if self.bed_fade_text_timer <= 0:
-                self.bed_fade_phase = "fade_in"
-        
-        elif self.bed_fade_phase == "fade_in":
-            self.bed_fade_alpha -= fade_speed * dt
-            if self.bed_fade_alpha <= 0:
-                self.bed_fade_alpha = 0
-                self.bed_fade_active = False
-                self.bed_fade_phase = None
-                self.resume_player_physics()
-                # Get the Bed object and reset its interaction flag
-                for obj in self.level_data.get("interactables", []):
-                    if hasattr(obj, "bed_interaction_active"):
-                        obj.bed_interaction_active = False
+        """Update bed fade animation - delegates to Bed class"""
+        for obj in self.level_data.get("interactables", []):
+            if hasattr(obj, 'update_fade'):
+                obj.update_fade(dt, self.player, self)
+                
+                # Check if tent spawning should occur after rest
+                if hasattr(obj, 'bed_interaction_active') and not obj.fade_active:
+                    for tent in self.level_data.get("interactables", []):
+                        if hasattr(tent, "spawn_bandits_after_rest") and tent.spawn_bandits_after_rest:
+                            # Spawn 3 bandits near the tent
+                            from Assets.Characters import SmallBandit
+                            bandits = [SmallBandit(tent.x + 40 * i, tent.y - 100) for i in range(3)]
+                            self.level_data.get("enemies", []).extend(bandits)
+                            tent.spawn_bandits_after_rest = False
 
     # ==================== INPUT HANDLING ====================
     def handle_input(self):
@@ -632,187 +771,90 @@ class Game:
             self.active_menu = "pause"
         
         elif event.key == kb["MoveLeft"]:
-            # Start moving left (only if not invulnerable)
-            if not self.player.invulnerable:
+            # Start moving left
+            if self.player.hit_stun_frames <= 0:
                 self.player.moving_left = True
         
         elif event.key == kb["MoveRight"]:
-            # Start moving right (only if not invulnerable)
-            if not self.player.invulnerable:
+            # Start moving right
+            if self.player.hit_stun_frames <= 0:
                 self.player.moving_right = True
         
         elif event.key == kb["Jump"] and self.player.on_ground:
-            # Teleport upward (only if on ground and not invulnerable)
-            if not self.player.invulnerable:
+            # Teleport upward (only if on ground)
+            if self.player.on_ground and self.jump_cooldown <= 0:
                 self.player.teleport_jump(self.get_collision_rects(), self.config.PLAYER_TELEPORT_DISTANCE)
+                self.jump_cooldown = self.jump_cooldown_max
         
         elif event.key == kb["Interact"]:
             # Try to interact with nearby objects
             self.handle_interactions()
         
-        elif event.key == kb.get("Attack", self.config.DEFAULT_ATTACK_KEY):
-            # Attack (can't attack while stunned or invulnerable)
-            if self.player.is_stunned or self.player.invulnerable:
-                return
+        elif event.key == kb.get("Block", 102):  # F key
+            # Start blocking
+            self.player.start_block()
+        
+        elif event.key == kb.get("Attack", 32):  # SPACE key
+            # Process rhythm-based attack
+            current_time = time.time()
             
-            # Get current beat from music
-            beat_number = 1
-            seconds_per_beat = 0.5  # Default
-            if self.audio_system.current_song and self.audio_system.current_song.is_playing:
-                beat_number = self.audio_system.current_song.current_beat
-                seconds_per_beat = self.audio_system.current_song.seconds_per_beat
+            # Determine direction based on keys held
+            direction = "neutral"
+            if self.player.moving_left or self.player.moving_right:
+                direction = "forward"
+            elif pygame.key.get_pressed()[self.settings.keybinds.get("MoveDown", 115)]:  # S key
+                direction = "down"
             
-            # Start attack and check if it hits
-            if self.player.start_attack(beat_number):
-                hit_enemy = self.handle_combat_hits()  # Check for hits
-                
-                # Record this hit in combo tracker with timing info
-                self.player.combo_tracker.add_hit(time.time(), beat_number, hit_enemy, seconds_per_beat)
-                
-                # Check if combo was invalid (wrong pattern)
-                if self.player.combo_tracker.invalid_combo:
-                    # Punish player: lose mana and get knocked back
-                    from Assets.GameBalance import COMBO_BALANCE
-                    mana_loss = COMBO_BALANCE['wrong_combo_mana_loss']
-                    self.player.use_mana(mana_loss)
-                    
-                    knockback_direction = -1 if self.player.facing_right else 1
-                    kb_config = COMBO_BALANCE['wrong_combo_knockback']
-                    stun = COMBO_BALANCE['wrong_combo_stun']
-                    self.player.apply_knockback(knockback_direction * kb_config['x'], kb_config['y'], stun_duration=stun)
-                    
-                    self.player.combo_tracker.reset()
-                
-                # If hit an enemy, player gets invulnerability
-                elif hit_enemy:
-                    self.player.set_invulnerable()
+            # Process attack through rhythm system
+            attack = self.rhythm_system.process_attack_input(direction, current_time)
+            
+            if attack:
+                # Apply attack to player (with rhythm multiplier)
+                self.player.perform_attack(
+                    attack.attack_type,
+                    self.rhythm_system.get_total_multiplier()
+                )
 
     def _handle_keyup(self, event):
         """Handle when a key is released"""
         kb = self.settings.keybinds
         
-        # Stop moving when left/right keys are released (if not invulnerable)
+        # Stop moving when left/right keys are released
         if event.key == kb["MoveLeft"]:
-            if not self.player.invulnerable:
-                self.player.moving_left = False
+            self.player.moving_left = False
         elif event.key == kb["MoveRight"]:
-            if not self.player.invulnerable:
-                self.player.moving_right = False
-
-    # COMBAT SYSTEM
-    def handle_combat_hits(self):
-        """Check if player's attack hits any enemies and apply damage"""
-        # Get the player's attack hitbox (invisible rectangle where attack can hit)
-        hitbox = self.player.get_attack_hitbox()
-        if not hitbox:
-            return False  # Player isn't attacking
-        
-        # Check if player completed a combo with special effects
-        from Assets.GameBalance import COMBOS, COMBO_BALANCE
-        combo_data = None
-        if self.player.combo_tracker.matched_combo:
-            combo_id = self.player.combo_tracker.matched_combo
-            if combo_id in COMBOS:
-                combo_data = COMBOS[combo_id]
-        
-        # For AOE combos (heavy combo), create larger hitbox
-        if combo_data and "aoe_range" in combo_data:
-            # Create AOE hitbox centered on player
-            aoe_range = combo_data["aoe_range"]
-            player_center_x = self.player.rect.centerx
-            player_center_y = self.player.rect.centery
-            hitbox = pygame.Rect(
-                player_center_x - aoe_range // 2,
-                player_center_y - aoe_range // 2,
-                aoe_range,
-                player_center_y + aoe_range // 2  # Extends down more
-            )
-            
-            # Use mana for heavy combo
-            if "mana_cost" in combo_data:
-                if self.player.stats['Current_Mana'] >= combo_data["mana_cost"]:
-                    self.player.use_mana(combo_data["mana_cost"])
-                else:
-                    return False  # Not enough mana
-        
-        # Find all enemies that the hitbox touches
-        hit_enemies = []
-        for enemy in self.level_data.get("enemies", []):
-            if hasattr(enemy, 'rect') and hitbox.colliderect(enemy.rect):
-                hit_enemies.append(enemy)
-        
-        if not hit_enemies:
-            return False  # Didn't hit anything
-        
-        # Calculate damage (base damage * combo multiplier)
-        damage_mult = self.player.combo_tracker.get_damage_multiplier()
-        base_damage = self.player.stats['Attack_Damage']
-        total_damage = int(base_damage * damage_mult)
-        
-        from Assets.GameBalance import COMBO_BALANCE
-        
-        # Apply damage to each enemy that was hit
-        for enemy in hit_enemies:
-            if hasattr(enemy, 'take_damage'):
-                # Deal damage
-                enemy.take_damage(total_damage, is_magical=False)
-                self.player.combo_tracker.enemies_hit.add(id(enemy))
-                
-                # Stun enemy if player is in a combo
-                if COMBO_BALANCE['combo_hit_stuns_enemies'] and self.player.combo_tracker.in_combo:
-                    enemy.apply_knockback(0, 0, stun_duration=COMBO_BALANCE['combo_stun_duration'])
-                
-                # Apply special combo knockback if combo is complete
-                if combo_data and "final_knockback" in combo_data:
-                    kb = combo_data["final_knockback"]
-                    knockback_dir = 1 if self.player.facing_right else -1
-                    kb_x = kb.get("x", 0) * knockback_dir
-                    kb_y = kb.get("y", 0)
-                    is_major = kb.get("major", False)
-                    enemy.apply_knockback(kb_x, kb_y, stun_duration=0.5, major=is_major)
-                
-                # If enemy died from this hit
-                if not enemy.is_alive():
-                    # Make enemy bounce away
-                    knockback_dir = 1 if self.player.facing_right else -1
-                    enemy.apply_knockback(knockback_dir * 15, -20, stun_duration=2.0, major=True)
-                    enemy.dead = True  # Mark for removal later
-                    
-                    # Spawn loot drops
-                    self._spawn_enemy_drops(enemy)
-                    
-                    # Give player experience
-                    exp_gained = enemy.experience_value
-                    self.player.gain_experience(exp_gained)
-        
-        return True  # Successfully hit at least one enemy
+            self.player.moving_right = False
+        elif event.key == kb.get("Block", 102):  # F key
+            self.player.is_blocking = False
 
     # SLOPE PHYSICS
     def handle_slope_physics(self):
         """Handle special physics for sloped polygons (tents and rocks)"""
         for tent in self.level_data.get("tents", []):
             if tent.handle_tent_collision(self.player):
-                self.player.moving_left = False
-                self.player.moving_right = False
                 return
         
         for rock in self.level_data.get("rocks", []):
             if rock.handle_rock_collision(self.player):
-                self.player.moving_left = False
-                self.player.moving_right = False
                 return
 
-    # ==================== GAME LOOP ====================
+    # GAME LOOP 
     def update(self):
         """Update game state - runs every frame (60 times per second)"""
         # dt = "delta time" = time since last frame in seconds
         dt = self.clock.get_time() / 1000.0
         
+        # Increment frame counter
+        self.frame_counter += 1
+        
         if self.transitioning:
             self.update_transition()
             return
         
-        if self.bed_fade_active:
+        # Check if any bed is active
+        bed_active = any(hasattr(obj, 'fade_active') and obj.fade_active 
+                        for obj in self.level_data.get("interactables", []))
+        if bed_active:
             self.update_bed_fade(dt)
             return
         
@@ -824,6 +866,10 @@ class Game:
         if self.active_menu:
             return  # Pause game while menu is open
         
+        # Update jump cooldown
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
+        
         # ========== Update Game Objects ==========
         # Update coins (collect animations, etc)
         for coin in self.level_data.get("coins", []):
@@ -833,58 +879,59 @@ class Game:
         # Update drops (physics, fading, removal)
         self._update_drops(dt)
         
-        # Update audio system (beat tracking)
+        # Update audio system
         self.audio_system.update()
         
-        # Get current beat from the music
-        current_beat = 1
-        if self.audio_system.current_song and self.audio_system.current_song.is_playing:
-            current_beat = self.audio_system.current_song.current_beat
-        
-        # Handle invulnerability flashing effect
-        if self.player.invulnerable:
-            # Flash the player by toggling a flag (used during draw)
-            self.player.invuln_flash = (int(time.time() * 10) % 2) == 0
-        
-        # ========== Update Combo and Zoom ==========
-        # Zoom in/out based on active combos
-        self.player.combo_tracker.update(time.time())
-        any_enemy_attacking = any(getattr(e, "combo_state", 0) > 0 for e in self.level_data.get("enemies", []))
-        player_combo_active = self.player.combo_tracker.should_zoom()
-        desired_zoom = (
-            self.player.combo_tracker.current_zoom if player_combo_active
-            else (2.0 if any_enemy_attacking else self.settings.display.get("zoom_level", 1.5))
-        )
-        if desired_zoom != self.config.ZOOM_SCALE:
-            self.apply_zoom(desired_zoom)
+        # Update rhythm battle system
+        self.rhythm_system.update(dt, time.time())
         
         # ========== Update Enemies ==========
         rects = self.get_collision_rects()
         for enemy in self.level_data.get("enemies", []):
             if hasattr(enemy, "update_ai"):
                 # Update enemy AI (behavior, movement, attacks)
-                enemy.update_ai(self.player, rects, self.config.GRAVITY, self.config.MAX_FALL_SPEED, dt, current_beat)
+                enemy.update_ai(self.player, rects, self.config.GRAVITY, self.config.MAX_FALL_SPEED, dt, 0, self.frame_counter)
         
-        # Remove dead enemies (after bounce animation completes)
-        if hasattr(self, 'dead_enemy_timers'):
-            to_remove = []
+        # ========== Check Player Attacks on Enemies ==========
+        if hasattr(self.player, 'current_attack') and self.player.current_attack and self.player.current_attack.get('active'):
+            attack_type = self.player.current_attack.get('type', 'neutral')
+            hitbox = self._get_attack_hitbox(attack_type)
+            
+            # Calculate attack rect with player facing direction
+            if self.player.facing_right:
+                attack_x = self.player.rect.centerx + hitbox['offset_x']
+            else:
+                attack_x = self.player.rect.centerx - hitbox['offset_x'] - hitbox['width']
+            
+            attack_rect = pygame.Rect(
+                attack_x,
+                self.player.rect.centery + hitbox['offset_y'],
+                hitbox['width'],
+                hitbox['height']
+            )
+            
             for enemy in self.level_data.get("enemies", []):
-                if hasattr(enemy, 'dead') and enemy.dead:
-                    if enemy not in self.dead_enemy_timers:
-                        self.dead_enemy_timers[enemy] = 1.5  # Wait 1.5 seconds before removing
-                    self.dead_enemy_timers[enemy] -= dt
-                    if self.dead_enemy_timers[enemy] <= 0:
-                        to_remove.append(enemy)
-            for enemy in to_remove:
-                self.level_data["enemies"].remove(enemy)
-                if enemy in self.dead_enemy_timers:
-                    del self.dead_enemy_timers[enemy]
-        else:
-            # First time: initialize dead enemy timer dict
-            self.dead_enemy_timers = {}
-            for enemy in self.level_data.get("enemies", []):
-                if not enemy.is_alive():
-                    enemy.dead = True
+                if attack_rect.colliderect(enemy.rect):
+                    # Hit the enemy!
+                    enemy.take_damage(self.player.current_attack['damage'])
+                    enemy.apply_knockback(
+                        self.player.current_attack['knockback_x'] * (1 if self.player.facing_right else -1),
+                        self.player.current_attack['knockback_y'],
+                        stun_duration=0.3
+                    )
+            
+            # Deactivate attack after one frame
+            self.player.current_attack['active'] = False
+        
+        # Remove dead enemies and spawn drops
+        enemies_to_remove = []
+        for enemy in self.level_data.get("enemies", []):
+            if not enemy.is_alive():
+                enemies_to_remove.append(enemy)
+                # Spawn loot drops
+                self._spawn_enemy_drops(enemy)
+        for enemy in enemies_to_remove:
+            self.level_data["enemies"].remove(enemy)
         
         # Generate new map sections for infinite levels
         if self.level_data.get("infinite", False):
@@ -899,14 +946,19 @@ class Game:
         # Handle stun and knockback
         self.player.update_stun_and_knockback(dt, rects)
         
-        # Lock movement while invulnerable
-        if self.player.invulnerable:
-            self.player.moving_left = False
-            self.player.moving_right = False
-        
         # Update player position (only if not stunned)
         if not self.player.is_stunned:
-            # Apply gravity first
+            # Check if we just came out of stun - restore held movement keys
+            if hasattr(self.player, '_was_stunned_last_frame') and self.player._was_stunned_last_frame:
+                # Check current key states and restore movement if keys are held
+                keys = pygame.key.get_pressed()
+                kb = self.settings.keybinds
+                if keys[kb["MoveLeft"]] and self.player.hit_stun_frames <= 0:
+                    self.player.moving_left = True
+                if keys[kb["MoveRight"]] and self.player.hit_stun_frames <= 0:
+                    self.player.moving_right = True
+            
+            # Apply gravity
             self.player.apply_gravity(self.config.GRAVITY, self.config.MAX_FALL_SPEED, rects)
             
             # Handle slopes (tents, rocks with special physics)
@@ -914,9 +966,6 @@ class Game:
             
             # Move player left/right
             self.player.move(rects)
-            
-            # Update attack animation
-            self.player.update_attack()
         else:
             # Still fall while stunned (can't prevent gravity)
             self.player.apply_gravity(self.config.GRAVITY, self.config.MAX_FALL_SPEED, rects)
@@ -925,6 +974,14 @@ class Game:
         # Position camera to follow player
         self.update_camera()
 
+    def _get_attack_hitbox(self, attack_type):
+        """Get attack hitbox dimensions based on attack type - from AttackConfig
+        
+        Returns:
+            dict with 'width', 'height', 'offset_x', 'offset_y' for the attack
+        """
+        return AttackConfig.get_hitbox(attack_type)
+    
     # ==================== RENDERING ====================
     def draw(self):
         """Draw everything on screen - runs every frame"""
@@ -940,6 +997,7 @@ class Game:
         self._draw_interactables()
         self._draw_coins()
         self._draw_drops()
+        
         self._draw_enemies()
         self._draw_player()
         
@@ -947,17 +1005,11 @@ class Game:
         self._draw_interaction_icons()
         self._draw_go_back_timer()
         self._draw_health_mana_bars()  # Health and mana bars
+        self._draw_rhythm_feedback()  # Rhythm battle feedback
         self._draw_menus()
         self._draw_transition()
         self._draw_go_back_fade()
         self._draw_bed_fade()
-        
-        # Draw metronome/beat counter (only in dark forest)
-        level_id = self.level_data.get("level_id", None)
-        self.audio_system.draw_beat_counter(self.screen, level_id)
-        
-        # Draw combo UI
-        self._draw_combo_ui()
         
         # Scale the internal screen to display surface with smooth scaling for better visuals
         scaled = pygame.transform.smoothscale(self.screen, (self.config.SCREEN_WIDTH, self.config.SCREEN_HEIGHT))
@@ -1009,22 +1061,22 @@ class Game:
 
     def _spawn_enemy_drops(self, enemy, count=5):
         """Spawn simple loot orbs that fan out on enemy death"""
-        # Create 5 drops that fly outward in random directions
-        for _ in range(count):
-            # Random angle (0 to 360 degrees)
-            angle = random.uniform(0, math.tau)  # tau = 2*pi = full circle
-            # Random speed for variety
-            speed = random.uniform(160, 240)
+        # Create drops that spray outward in a fan pattern
+        for i in range(count):
+            # Spread drops in a fan (mostly upward and sideways)
+            angle = random.uniform(-math.pi * 0.7, -math.pi * 0.3)  # Spray upward-ish
+            # Vary speed for visual variety
+            speed = random.uniform(300, 500)
             
             # Create a drop with position, velocity, and appearance
             self.drops.append({
                 "x": enemy.rect.centerx,  # Start at enemy center
                 "y": enemy.rect.centery,
                 "vx": math.cos(angle) * speed,  # Horizontal velocity
-                "vy": math.sin(angle) * speed - 140,  # Vertical velocity (- = up)
-                "life": 2.0,  # Lives for 2 seconds
-                "radius": 6,  # Size of the circle
-                "color": (255, 215, 120)  # Gold color (R, G, B)
+                "vy": math.sin(angle) * speed,  # Vertical velocity (negative = up)
+                "life": 3.0,  # Lives for 3 seconds
+                "radius": 8,  # Bigger size
+                "color": (255, 215, 0)  # Bright gold color
             })
 
     def _update_drops(self, dt):
@@ -1033,8 +1085,8 @@ class Game:
             return  # No drops to update
         
         # Physics constants
-        gravity = 520  # How fast drops fall
-        damping = 0.9 ** (dt * 60)  # How much velocity slows down each frame
+        gravity = 800  # Strong gravity for satisfying arc
+        damping = 0.92 ** (dt * 60)  # Slight air resistance
         
         # Keep only drops that are still alive
         alive = []
@@ -1066,8 +1118,15 @@ class Game:
             screen_y = int(drop["y"] - self.camera_y)
             screen_pos = (screen_x, screen_y)
             
-            # Draw the drop as a filled circle
-            pygame.draw.circle(self.screen, drop["color"], screen_pos, drop["radius"])
+            # Pulse effect based on lifetime
+            pulse = abs(math.sin(drop["life"] * 5)) * 0.3 + 0.7
+            radius = int(drop["radius"] * pulse)
+            
+            # Draw the drop as a filled circle with glow
+            pygame.draw.circle(self.screen, drop["color"], screen_pos, radius)
+            # Outer glow
+            glow_color = (255, 255, 150, 128)
+            pygame.draw.circle(self.screen, drop["color"], screen_pos, radius + 2, 1)
 
     def _draw_enemies(self):
         """Draw enemies"""
@@ -1077,22 +1136,60 @@ class Game:
 
     def _draw_player(self):
         """Draw player character"""
+        # Don't draw player during jump animation (0.3s)
+        if False:
+            return
+        
         screen_rect = self.player.rect.move(-self.camera_x, -self.camera_y)
         
-        # Draw player with invulnerability flash effect
-        alpha = self.config.ALPHA_PLAYER
-        if self.player.invulnerable and self.player.invuln_flash:
-            alpha = int(self.config.ALPHA_PLAYER * 0.5)  # Flash by reducing alpha
+        # Flash when hit
+        if self.player.hit_stun_frames > 0:
+            if self.player.hit_flash_timer % 4 < 2:  # Flash every 4 frames
+                alpha = 128  # Semi-transparent when hit
+            else:
+                alpha = self.config.ALPHA_PLAYER
+        else:
+            alpha = self.config.ALPHA_PLAYER
         
+        # Draw player with normal rendering
         self._draw_with_alpha(self.screen, self.config.COLOR_PLAYER, screen_rect, alpha)
         
-        # Draw attack hitbox if attacking
-        hitbox = self.player.get_attack_hitbox()
-        if hitbox:
-            hitbox_surface = pygame.Surface((hitbox.width, hitbox.height), pygame.SRCALPHA)
-            config = self.player.attack_hitbox_config
-            hitbox_surface.fill((*config['color'], config['alpha']))
-            self.screen.blit(hitbox_surface, (hitbox.x - self.camera_x, hitbox.y - self.camera_y))
+        # Draw blue shield when blocking
+        if self.player.is_blocking:
+            shield_surf = pygame.Surface((screen_rect.width + 20, screen_rect.height + 20), pygame.SRCALPHA)
+            shield_color = (100, 150, 255, 120)  # Blue transparent
+            pygame.draw.rect(shield_surf, shield_color, shield_surf.get_rect(), border_radius=8)
+            self.screen.blit(shield_surf, (screen_rect.x - 10, screen_rect.y - 10))
+        
+        # Draw attack slash effect
+        if hasattr(self.player, 'current_attack') and self.player.current_attack and self.player.current_attack.get('active'):
+            attack_type = self.player.current_attack.get('type', 'neutral')
+            hitbox = self._get_attack_hitbox(attack_type)
+            
+            # Calculate screen position
+            if self.player.facing_right:
+                attack_x = self.player.rect.centerx + hitbox['offset_x']
+            else:
+                attack_x = self.player.rect.centerx - hitbox['offset_x'] - hitbox['width']
+            
+            attack_rect = pygame.Rect(
+                attack_x - self.camera_x,
+                self.player.rect.centery + hitbox['offset_y'] - self.camera_y,
+                hitbox['width'],
+                hitbox['height']
+            )
+            
+            # Draw slash effect based on attack type
+            if attack_type == "down":
+                color = (255, 100, 100, 150)  # Red for down attack
+            elif attack_type == "forward":
+                color = (255, 215, 0, 150)  # Gold for forward attack
+            else:
+                color = (200, 200, 255, 150)  # Blue for neutral attack
+            
+            slash_surf = pygame.Surface((attack_rect.width, attack_rect.height), pygame.SRCALPHA)
+            pygame.draw.ellipse(slash_surf, color, slash_surf.get_rect())
+            self.screen.blit(slash_surf, (attack_rect.x, attack_rect.y))
 
     def _draw_interaction_icons(self):
         """Draw interaction icons above nearby objects"""
@@ -1126,34 +1223,36 @@ class Game:
             cancel_y = player_screen_y + text_surface.get_height() + 5
             self.screen.blit(cancel_text, (player_screen_x - cancel_text.get_width() // 2, cancel_y))
 
-    def _draw_combo_ui(self):
-        """Draw combo info during active combat"""
-        # Only show when player is in a combo
-        if not self.player.combo_tracker.in_combo:
-            return
-        
-        base_x = 15
-        y_pos = 130
-        
-        # Draw hit counter
-        if COMBO_CONFIG["show_hit_count"]:
-            hit_text = f"Hits: {self.player.combo_tracker.hit_count}"
-            hit_surface = self.font.render(hit_text, True, COMBO_CONFIG["hit_text_color"])
-            self.screen.blit(hit_surface, (base_x, y_pos))
-            y_pos += 30
-        
-        # Draw combo name
-        if COMBO_CONFIG["show_combo_name"] and self.player.combo_tracker.matched_combo:
-            combo_name = self.player.combo_tracker.get_combo_name()
-            combo_surface = self.font.render(combo_name, True, COMBO_CONFIG["combo_text_color"])
-            self.screen.blit(combo_surface, (base_x, y_pos))
-            y_pos += 30
+    def _draw_rhythm_combat(self):
+        """Legacy method - no longer used"""
+        pass
+    
+    def _draw_rhythm_feedback(self):
+        """Draw rhythm battle system feedback"""
+        if not self.active_menu:  # Only show during gameplay
+            # Check if any enemies are nearby (within 400 pixels)
+            enemies_nearby = False
+            for enemy in self.level_data.get("enemies", []):
+                distance = abs(enemy.rect.centerx - self.player.rect.centerx)
+                if distance < 400:
+                    enemies_nearby = True
+                    break
             
-            # Draw damage multiplier
-            mult = self.player.combo_tracker.get_damage_multiplier()
-            mult_text = f"{mult}x Damage"
-            mult_surface = self.font.render(mult_text, True, COMBO_CONFIG["combo_text_color"])
-            self.screen.blit(mult_surface, (base_x, y_pos))
+            # Draw feedback text above player (PERFECT/GOOD/MISS)
+            self.rhythm_system.draw_feedback(
+                self.screen,
+                self.player.rect.centerx,
+                self.player.rect.centery,
+                self.camera_x,
+                self.camera_y,
+                self.font
+            )
+            
+            # Draw combo counter (top right)
+            self.rhythm_system.draw_combo_counter(self.screen, self.font)
+            
+            # Draw beat timing bar (bottom center) - only when enemies nearby
+            self.rhythm_system.draw_beat_indicators(self.screen, self.font, enemies_nearby)
     
     def _draw_health_mana_bars(self):
         """Draw health and mana bars in top-left corner"""
@@ -1170,16 +1269,33 @@ class Game:
         health_ratio = max(0, min(1, health_ratio))  # Keep between 0 and 1
         
         # Draw background (dark red)
-        pygame.draw.rect(self.screen, (100, 0, 0), (bar_x, health_y, bar_width, bar_height))
-        # Draw foreground (bright red) - size based on health
-        pygame.draw.rect(self.screen, (255, 0, 0), (bar_x, health_y, int(bar_width * health_ratio), bar_height))
+        shadow_offset = 2
+        pygame.draw.rect(self.screen, (0, 0, 0), 
+                        (bar_x + shadow_offset, health_y + shadow_offset, bar_width, bar_height), 
+                        border_radius=5)
+        pygame.draw.rect(self.screen, (60, 10, 10), (bar_x, health_y, bar_width, bar_height), border_radius=5)
+        
+        # Draw foreground (bright red) with gradient
+        if health_ratio > 0:
+            filled_width = int(bar_width * health_ratio)
+            for i in range(filled_width):
+                progress = i / bar_width
+                r = int(255 - (progress * 40))
+                g = int(30 * progress)
+                color = (r, g, 0)
+                pygame.draw.rect(self.screen, color, (bar_x + i, health_y + 2, 1, bar_height - 4))
+        
+        # Draw glossy highlight
+        highlight = pygame.Surface((bar_width - 4, bar_height // 3), pygame.SRCALPHA)
+        highlight.fill((255, 255, 255, 40))
+        self.screen.blit(highlight, (bar_x + 2, health_y + 2))
+        
         # Draw white border
-        pygame.draw.rect(self.screen, (255, 255, 255), (bar_x, health_y, bar_width, bar_height), 2)
+        pygame.draw.rect(self.screen, (255, 255, 255), (bar_x, health_y, bar_width, bar_height), 2, border_radius=5)
         
         # Draw health text
         health_text = f"HP: {int(self.player.stats['Current_Health'])}/{int(self.player.stats['Max_Health'])}"
-        health_surface = self.font.render(health_text, True, (255, 255, 255))
-        self.screen.blit(health_surface, (bar_x + 5, health_y + 2))
+        self.draw_text_with_shadow(health_text, self.font, (255, 255, 255), bar_x + 8, health_y + 4)
         
         # ===== MANA BAR =====
         # Calculate how full the mana bar is (0.0 to 1.0)
@@ -1187,16 +1303,33 @@ class Game:
         mana_ratio = max(0, min(1, mana_ratio))  # Keep between 0 and 1
         
         # Draw background (dark blue)
-        pygame.draw.rect(self.screen, (0, 0, 100), (bar_x, mana_y, bar_width, bar_height))
-        # Draw foreground (bright blue) - size based on mana
-        pygame.draw.rect(self.screen, (0, 100, 255), (bar_x, mana_y, int(bar_width * mana_ratio), bar_height))
+        shadow_offset = 2
+        pygame.draw.rect(self.screen, (0, 0, 0), 
+                        (bar_x + shadow_offset, mana_y + shadow_offset, bar_width, bar_height),
+                        border_radius=5)
+        pygame.draw.rect(self.screen, (10, 10, 60), (bar_x, mana_y, bar_width, bar_height), border_radius=5)
+        
+        # Draw foreground (bright blue) with gradient
+        if mana_ratio > 0:
+            filled_width = int(bar_width * mana_ratio)
+            for i in range(filled_width):
+                progress = i / bar_width
+                b = int(255 - (progress * 40))
+                g = int(120 + (progress * 40))
+                color = (0, g, b)
+                pygame.draw.rect(self.screen, color, (bar_x + i, mana_y + 2, 1, bar_height - 4))
+        
+        # Draw glossy highlight
+        highlight = pygame.Surface((bar_width - 4, bar_height // 3), pygame.SRCALPHA)
+        highlight.fill((255, 255, 255, 40))
+        self.screen.blit(highlight, (bar_x + 2, mana_y + 2))
+        
         # Draw white border
-        pygame.draw.rect(self.screen, (255, 255, 255), (bar_x, mana_y, bar_width, bar_height), 2)
+        pygame.draw.rect(self.screen, (255, 255, 255), (bar_x, mana_y, bar_width, bar_height), 2, border_radius=5)
         
         # Draw mana text
         mana_text = f"MP: {int(self.player.stats['Current_Mana'])}/{int(self.player.stats['Max_Mana'])}"
-        mana_surface = self.font.render(mana_text, True, (255, 255, 255))
-        self.screen.blit(mana_surface, (bar_x + 5, mana_y + 2))
+        self.draw_text_with_shadow(mana_text, self.font, (255, 255, 255), bar_x + 8, mana_y + 4)
         
         # ===== EXPERIENCE BAR =====
         exp_bar_width = 200
@@ -1228,19 +1361,10 @@ class Game:
             self.screen.blit(fade_surface, (0, 0))
 
     def _draw_bed_fade(self):
-        """Draw bed fade effect and text"""
-        if self.bed_fade_active:
-            fade_surface = pygame.Surface((self.screen.get_width(), self.screen.get_height()))
-            fade_surface.fill((0, 0, 0))
-            fade_surface.set_alpha(self.bed_fade_alpha)
-            self.screen.blit(fade_surface, (0, 0))
-            
-            # Draw text during text phase
-            if self.bed_fade_phase == "text":
-                text = self.font.render("The next day...", True, (255, 255, 255))
-                text_x = self.screen.get_width() // 2 - text.get_width() // 2
-                text_y = self.screen.get_height() // 2 - text.get_height() // 2
-                self.screen.blit(text, (text_x, text_y))
+        """Draw bed fade effect and text - delegates to Bed class"""
+        for obj in self.level_data.get("interactables", []):
+            if hasattr(obj, 'draw_fade'):
+                obj.draw_fade(self.screen)
 
     def _draw_menus(self):
         """Draw active menu"""
@@ -1252,10 +1376,32 @@ class Game:
         """Draw transition effect"""
         if self.transitioning:
             self.transition_surface.fill(self.config.COLOR_COLORKEY)
-            center_x = self.screen.get_width() // 2
-            center_y = self.screen.get_height() // 2
-            pygame.draw.circle(self.transition_surface, self.config.COLOR_TRANSITION,
-                             (center_x, center_y), int(self.transition_radius))
+            # Draw circle at the center of the screen (player stays centered due to camera)
+            center_x = self.transition_surface.get_width() // 2
+            center_y = self.transition_surface.get_height() // 2
+            
+            # During expand and collapse phases, draw black circle with "Travelling to..." text
+            if self.transition_phase in ["expand", "collapse"]:
+                pygame.draw.circle(self.transition_surface, (0, 0, 0),
+                                 (center_x, center_y), int(self.transition_radius))
+                
+                # Show "Travelling to..." text during expand phase
+                if self.transition_phase == "expand":
+                    travelling_text = self.font.render("Travelling to...", True, (255, 255, 255))
+                    text_x = center_x - travelling_text.get_width() // 2
+                    text_y = center_y - travelling_text.get_height() // 2
+                    self.transition_surface.blit(travelling_text, (text_x, text_y))
+            
+            # During show_destination phase, fade out the destination name
+            elif self.transition_phase == "show_destination":
+                # Draw destination name with fade
+                dest_font = pygame.font.SysFont(None, 96)  # Big text
+                dest_text = dest_font.render(self.transition_destination_name, True, (255, 255, 255))
+                dest_text.set_alpha(int(self.destination_fade_alpha))
+                text_x = center_x - dest_text.get_width() // 2
+                text_y = center_y - dest_text.get_height() // 2
+                self.transition_surface.blit(dest_text, (text_x, text_y))
+            
             self.screen.blit(self.transition_surface, (0, 0))
 
     def run(self):
@@ -1267,5 +1413,4 @@ class Game:
             self.clock.tick(self.config.FPS)
 
 
-# ENTRY POINT
 Game().run()

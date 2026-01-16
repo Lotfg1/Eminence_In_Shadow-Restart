@@ -31,6 +31,6 @@ def load_level():
         "player_start": player_start,
         "infinite": False,
         "world_width": 1080,
-        "level_id": "player_room",  # Identifier for music system
-        "music": "calm_theme"  # Which song to play
+        "level_id": "player_room",
+        "music_category": "player_room"
     }

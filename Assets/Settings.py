@@ -11,14 +11,18 @@ class Settings:
             "sfx_volume": 1.0
         }
         self.keybinds = {
-            "MoveLeft": 97,
-            "MoveRight": 100,
-            "Jump": 119,
-            "Interact": 101,
-            "Pause": 27
+            "MoveLeft": 97,      # a
+            "MoveRight": 100,    # d
+            "Jump": 119,         # w
+            "MoveDown": 115,     # s
+            "Interact": 101,     # e
+            "Pause": 27,         # ESC
+            "Attack": 32,        # SPACE - normal attack/spam
+            "Block": 102,        # f - block/counter
         }
         self.display = {
-            "zoom_level": 1.5
+            "zoom_level": 1.5,
+            "damage_counter_enabled": True
         }
         self.load()
 

@@ -36,5 +36,5 @@ def load_level():
         "infinite": False,
         "world_width": 1080,
         "level_id": "city",
-        "music": "city_theme"
+        "music_category": "city"
     }

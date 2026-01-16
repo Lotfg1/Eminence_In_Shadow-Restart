@@ -1,7 +1,9 @@
 # Assets/Interactables.py
 import pygame
+import random
 import time
-
+from PIL import Image
+from Assets.Characters import SmallBandit
 class Interactable:
     def __init__(self, x, y, width, height, collidable=True):
         self.rect = pygame.Rect(x, y, width, height)
@@ -21,25 +23,67 @@ class Bed(Interactable):
     def __init__(self, x, y, width=64, height=32):
         super().__init__(x, y, width, height, collidable=True)
         self.bed_interaction_active = False
+        self.fade_active = False
+        self.fade_phase = None
+        self.fade_alpha = 0
+        self.fade_text_timer = 0
 
     def interact(self, player, game):
         if not self.bed_interaction_active:
             self.bed_interaction_active = True
-            game.bed_fade_active = True
-            game.bed_fade_phase = "fade_out"
-            game.bed_fade_alpha = 0
+            self.fade_active = True
+            self.fade_phase = "fade_out"
+            self.fade_alpha = 0
             game.pause_player_physics()
-
-    def draw(self, screen, camera_x, camera_y, config):
-        """Draw bed with config colors"""
-        screen_rect = self.rect.move(-camera_x, -camera_y)
-        if config.ALPHA_BED < 255:
-            temp_surface = pygame.Surface((self.rect.width, self.rect.height), pygame.SRCALPHA)
-            temp_surface.fill((*config.COLOR_BED, config.ALPHA_BED))
-            screen.blit(temp_surface, screen_rect.topleft)
-        else:
-            pygame.draw.rect(screen, config.COLOR_BED, screen_rect)
     
+    def update_fade(self, dt, player, game):
+        """Update bed fade animation - call this from game update loop"""
+        if not self.fade_active:
+            return
+        
+        fade_speed = 300  # Alpha change per second
+        
+        if self.fade_phase == "fade_out":
+            self.fade_alpha += fade_speed * dt
+            if self.fade_alpha >= 255:
+                self.fade_alpha = 255
+                self.fade_phase = "text"
+                self.fade_text_timer = 2.0  # Show text for 2 seconds
+                # Heal player when resting
+                player.heal(player.stats["max_health"])
+        
+        elif self.fade_phase == "text":
+            self.fade_text_timer -= dt
+            if self.fade_text_timer <= 0:
+                self.fade_phase = "fade_in"
+        
+        elif self.fade_phase == "fade_in":
+            self.fade_alpha -= fade_speed * dt
+            if self.fade_alpha <= 0:
+                self.fade_alpha = 0
+                self.fade_active = False
+                self.fade_phase = None
+                self.bed_interaction_active = False
+                game.resume_player_physics()
+    
+    def draw_fade(self, screen):
+        """Draw fade overlay and text - call this from game draw loop"""
+        if not self.fade_active:
+            return
+        
+        # Draw black fade overlay
+        fade_surface = pygame.Surface(screen.get_size())
+        fade_surface.fill((0, 0, 0))
+        fade_surface.set_alpha(int(self.fade_alpha))
+        screen.blit(fade_surface, (0, 0))
+        
+        # Draw "Resting..." text during text phase
+        if self.fade_phase == "text":
+            font = pygame.font.Font(None, 72)
+            text = font.render("Resting...", True, (255, 255, 255))
+            text_rect = text.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
+            screen.blit(text, text_rect)
+
     def draw(self, screen, camera_x, camera_y, config):
         """Draw bed with config colors"""
         screen_rect = self.rect.move(-camera_x, -camera_y)
@@ -79,8 +123,21 @@ class Wall(Interactable):
         self.destination_index = destination_index
 
     def interact(self, player, game):
+        """Handle wall interaction - opens travel menu if this is a level boundary"""
         if self.destination_index:
-            game.open_travel_menu()
+            self.open_travel_menu(game)
+    
+    def open_travel_menu(self, game):
+        """Open the travel menu with available destinations"""
+        from Assets.Menus import TravelMenu
+        destinations = [
+            (lvl.split("/")[-1].replace(".py", "").replace("_", " "), i)
+            for i, lvl in enumerate(game.level_files)
+            if i != game.current_level_index
+        ]
+        game.travel_menu = TravelMenu(game.font, destinations)
+        game.pause_player_physics()
+        game.active_menu = "travel"
     
     def draw(self, screen, camera_x, camera_y, config):
         """Draw wall with config colors"""
@@ -118,7 +175,7 @@ class Coin:
         
         try:
             # Try to load GIF frames (requires pillow)
-            from PIL import Image
+            
             gif = Image.open("Assets/Animations/Coin.gif")
             self.animation_frames = []
             try:
@@ -228,21 +285,42 @@ class Tent:
         return y_on_slope
     
     def handle_tent_collision(self, player):
-        """Make player slide off the tent"""
+        """Make player slide down the tent naturally"""
         if not self.is_player_on_tent(player):
             return False
         
         tent_y = self.get_tent_y_at_x(player.rect.centerx)
-        
         player.rect.bottom = int(tent_y)
         player.y_momentum = 0
+        player.on_ground = True
         
-        if player.rect.centerx < self.peak_x:
-            player.rect.x -= 3
-        else:
-            player.rect.x += 3
+        # Gentle push away from peak to prevent getting stuck
+        distance_from_peak = abs(player.rect.centerx - self.peak_x)
+        if distance_from_peak < 40:  # Only near peak
+            if player.rect.centerx < self.peak_x:
+                player.rect.x -= 1  # Gentle push left
+            elif player.rect.centerx > self.peak_x:
+                player.rect.x += 1  # Gentle push right
         
-        player.on_ground = False
+        return True
+        
+
+    def interact(self, player, game):
+        """Rest at the tent - shows fade animation and heals to full, then spawns 3 bandits"""
+        # Restore health/mana to full
+        player.stats['Current_Health'] = player.stats.get('Max_Health', player.stats['Current_Health'])
+        player.stats['Current_Mana'] = player.stats.get('Max_Mana', player.stats['Current_Mana'])
+
+        # Start bed fade animation (same as sleeping in a bed)
+        game.bed_fade_active = True
+        game.bed_fade_phase = "fade_out"
+        game.bed_fade_alpha = 0
+        game.pause_player_physics()
+        
+        # Mark tent for enemy spawning after fade
+        self.spawn_bandits_after_rest = True
+        self.tent_spawn_timer = 4.0  # 4 seconds, or when player gets up from fade
+        
         return True
     
     def get_collision_rect(self):
@@ -341,20 +419,24 @@ class Rock:
         return y_on_slope
     
     def handle_rock_collision(self, player):
+        """Handle player on rock - place on surface and allow sliding"""
         if not self.is_player_on_rock(player):
             return False
         
         rock_y = self.get_rock_y_at_x(player.rect.centerx)
-        
         player.rect.bottom = int(rock_y)
         player.y_momentum = 0
+        player.on_ground = True
         
-        if player.rect.centerx < self.peak_x:
-            player.rect.x -= 3
-        else:
-            player.rect.x += 3
+        # Gentle push away from peak to prevent getting stuck
+        # Only push if we're near the peak
+        distance_from_peak = abs(player.rect.centerx - self.peak_x)
+        if distance_from_peak < 40:  # Only near peak
+            if player.rect.centerx < self.peak_x:
+                player.rect.x -= 1  # Gentle push left
+            elif player.rect.centerx > self.peak_x:
+                player.rect.x += 1  # Gentle push right
         
-        player.on_ground = False
         return True
     
     def draw(self, screen, camera_x, camera_y, config):
