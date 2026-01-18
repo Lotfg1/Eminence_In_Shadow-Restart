@@ -22,7 +22,7 @@ import os
 import numpy as np
 from Assets.Settings import Settings
 from Assets.Characters import MainCharacter
-from Assets.Menus import StartMenu, PauseMenu, MerchantMenu, TravelMenu, SettingsMenu, StatusMenu
+from Assets.Menus import StartMenu, PauseMenu, MerchantMenu, TravelMenu, SettingsMenu, StatusMenu, ScrollableLayout
 from Assets.AudioConfig import AudioSystem, MusicManager
 from Assets.RhythmBattle import RhythmBattleSystem
 from Assets.AttackConfig import AttackConfig
@@ -127,6 +127,7 @@ class Game:
     def __init__(self):
         pygame.init()
         self.config = Config()
+        self.settings = Settings(self.config.SETTINGS_PATH)
         
         # Display setup - create a scaled surface for zoom
         self.display_surface = pygame.display.set_mode((self.config.SCREEN_WIDTH, self.config.SCREEN_HEIGHT))
@@ -167,7 +168,7 @@ class Game:
         self.drops = []
         
         # Audio system - simple background music
-        self.audio_system = AudioSystem()
+        self.audio_system = AudioSystem(self.settings)
         # Start with menu theme
         self.audio_system.play_song("menu_theme")
         
@@ -180,8 +181,6 @@ class Game:
         # Load the starting level
         self.load_level(self.level_files[self.current_level_index])
 
-        # Settings and menus
-        self.settings = Settings(self.config.SETTINGS_PATH)
         # Ensure zoom level exists
         if "zoom_level" not in self.settings.display:
             self.settings.display["zoom_level"] = self.config.ZOOM_SCALE
@@ -198,6 +197,7 @@ class Game:
 
         # Transition system
         self._initialize_transition()
+        self.apply_audio_settings()
         
         # Go Back timer system
         self.go_back_active = False
@@ -251,6 +251,18 @@ class Game:
         
         self.target_zoom = zoom_level
 
+    def apply_audio_settings(self):
+        """Sync saved audio settings to the mixer and sounds"""
+        volumes = self.settings.audio
+        self.audio_system.set_volumes(
+            volumes.get("master_volume", 1.0),
+            volumes.get("music_volume", 1.0),
+            volumes.get("sfx_volume", 1.0),
+        )
+
+        if hasattr(self, "travel_sound"):
+            self.audio_system.apply_sfx_volume(self.travel_sound)
+
     def trigger_screen_shake(self, intensity=0.5, duration=0.2):
         """Trigger a screen shake effect
         
@@ -265,12 +277,13 @@ class Game:
         """Initialize all menu objects"""
         from Assets.Menus import KeyBindsMenu
         self.menus = {
-            "start": StartMenu(self.font),
-            "pause": PauseMenu(self.font, self.screen.get_width()),
-            "merchant": MerchantMenu(self.font),
+            "start": StartMenu(self.font, self.settings),
+            "pause": PauseMenu(self.font, self.screen.get_width(), self.settings),
+            "merchant": MerchantMenu(self.font, self.settings),
             "settings": SettingsMenu(self.font, self.settings, self.config),
             "status": StatusMenu(self.font, self.player),
-            "keybinds": KeyBindsMenu(self.font, self.settings)
+            "keybinds": KeyBindsMenu(self.font, self.settings),
+            "combos": ScrollableLayout()
         }
         self.active_menu = "start"
         self.travel_menu = None
@@ -321,11 +334,11 @@ class Game:
         # Clear any leftover drops from previous level
         self.drops.clear()
         
-        # Change music based on level
+        # Change music based on level - use registered songs for correct BPM
         level_id = self.level_data.get("level_id", "exploration")
-        level_music = MusicManager.get_random_song_from_level(level_id)
+        level_music = MusicManager.get_random_song(level_id)
         
-        # Use the song ID system
+        # Play the song ID (which has correct BPM set)
         try:
             self.audio_system.play_song(level_music)
         except Exception as e:
@@ -636,9 +649,17 @@ class Game:
         elif result == "Status":
             self.previous_menu = self.active_menu
             self.active_menu = "status"
+        elif result == "Combos":
+            self.previous_menu = self.active_menu
+            # Reset scroll state each time we open it
+            if hasattr(self.menus["combos"], "init"):
+                self.menus["combos"].init()
+            self.active_menu = "combos"
         elif result == "go_back":
             self.resume_player_physics()
             self.start_go_back_timer()
+        elif result == "audio_changed":
+            self.apply_audio_settings()
         elif result == "zoom_changed":
             # Apply zoom immediately
             new_zoom = self.settings.display.get("zoom_level", 1.5)
@@ -871,6 +892,10 @@ class Game:
         self.frame_counter += 1
         
         if self.transitioning:
+            # Keep audio system running for crossfades and song switches
+            self.audio_system.update()
+            # Continue updating rhythm system during transitions for song consistency
+            self.rhythm_system.update(dt, time.time())
             self.update_transition()
             return
         
@@ -878,15 +903,21 @@ class Game:
         bed_active = any(hasattr(obj, 'fade_active') and obj.fade_active 
                         for obj in self.level_data.get("interactables", []))
         if bed_active:
+            # Keep audio system running during fades
+            self.audio_system.update()
             self.update_bed_fade(dt)
             return
         
         if self.go_back_active:
             self.update_go_back_timer(dt)
             if self.go_back_fade_phase:
+                # Keep audio system running during go-back fade
+                self.audio_system.update()
                 return
         
         if self.active_menu:
+            # Still update audio for scheduled song changes
+            self.audio_system.update()
             return  # Pause game while menu is open
         
         # Update jump cooldown
@@ -907,6 +938,16 @@ class Game:
         
         # Update rhythm battle system
         self.rhythm_system.update(dt, time.time())
+        
+        # Update player attack state (cooldown, stun decay)
+        if self.audio_system.current_song:
+            bpm = self.audio_system.current_song.bpm
+        else:
+            bpm = 120  # Default fallback
+
+        # Protect against missing method in case of stale class definitions
+        if hasattr(self.player, "update_attack"):
+            self.player.update_attack(self.audio_system.current_beat, bpm)
         
         # ========== Update Enemies ==========
         rects = self.get_collision_rects()
@@ -1449,6 +1490,9 @@ class Game:
 
     def run(self):
         """Main game loop"""
+        # Draw initial frame to prevent black screen
+        self.draw()
+        
         while True:
             self.handle_input()
             self.update()

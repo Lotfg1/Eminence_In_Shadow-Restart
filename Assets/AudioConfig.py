@@ -83,45 +83,45 @@ SONGS = {
     "battle_theme": Song(
         name="Battle Theme - Dark Forest",
         filepath="Assets/Music/Dark_Forest/OxT - HIGHEST.mp3",  # Put your battle music here!
-        bpm=180,  # Adjust to match your music
+        bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
-        auto_detect_bpm=False
+        auto_detect_bpm=True
     ),
     
     # City theme - peaceful town music
     "city_theme": Song(
         name="City Theme",
         filepath="Assets/Music/City/OxT - HIGHEST.mp3",  # Put your city music here!
-        bpm=120,  # Slower, calmer
+        bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
-        auto_detect_bpm=False
+        auto_detect_bpm=True
     ),
     
     # Player room - calm ambience
     "calm_theme": Song(
         name="Calm Theme - Player Room",
         filepath="Assets/Music/Player_Room/OxT - HIGHEST.mp3",  # Put your room music here!
-        bpm=90,  # Very slow and calm
+        bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
-        auto_detect_bpm=False
+        auto_detect_bpm=True
     ),
     
     # Start menu music
     "menu_theme": Song(
         name="Menu Theme",
         filepath="Assets/Music/Start_Menu/OxT - HIGHEST.mp3",  # Put your menu music here!
-        bpm=140,
+        bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
-        auto_detect_bpm=False
+        auto_detect_bpm=True
     ),
     
     # For backwards compatibility
     "highest": Song(
         name="OxT - HIGHEST",
         filepath="Assets/Music/OxT - HIGHEST.mp3",
-        bpm=180,
+        bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
-        auto_detect_bpm=False
+        auto_detect_bpm=True
     ),
     
     # Add more songs here - BPM will be detected automatically!
@@ -154,42 +154,110 @@ def get_beat_increment(bpm):
 class AudioSystem:
     """Manages music playback and beat synchronization"""
     
-    def __init__(self):
+    def __init__(self, settings=None):
         pygame.mixer.init()
         self.current_song = None
         self.font = pygame.font.SysFont(None, TIME_SIGNATURE_COUNTER_CONFIG["font_size"])
         self.info_font = pygame.font.SysFont(None, 24)
+
+        # Volume controls (0.0 - 1.0)
+        self.master_volume = 1.0
+        self.music_volume = 1.0
+        self.sfx_volume = 1.0
+
+        # Pending crossfade state
+        self._pending_song = None
+        self._pending_start_time = 0.0
+        self._pending_fade_in_ms = 0
+
+        if settings:
+            audio_cfg = settings.audio
+            self.set_volumes(
+                audio_cfg.get("master_volume", 1.0),
+                audio_cfg.get("music_volume", 1.0),
+                audio_cfg.get("sfx_volume", 1.0)
+            )
+        else:
+            self._apply_music_volume()
     
-    def play_song(self, song_id):
-        """Start playing a song by its ID"""
-        if song_id not in SONGS:
-            print(f"Warning: Song '{song_id}' not found!")
+    def play_song(self, song_or_path, fade_out_ms=600, fade_in_ms=600):
+        """Play a song by ID from SONGS or by direct file path, with fade."""
+        # Resolve song target
+        song = None
+        if isinstance(song_or_path, Song):
+            song = song_or_path
+        elif isinstance(song_or_path, str):
+            if song_or_path in SONGS:
+                song = SONGS[song_or_path]
+            else:
+                # Treat as a direct filepath; create a lightweight Song
+                name = os.path.splitext(os.path.basename(song_or_path))[0]
+                song = Song(name=name, filepath=song_or_path, bpm=None, auto_detect_bpm=True)
+        else:
+            print("Warning: Invalid song identifier provided to play_song")
             return False
-        
-        song = SONGS[song_id]
-        
-        try:
-            pygame.mixer.music.load(song.filepath)
-            pygame.mixer.music.play(-1)  # Loop indefinitely
-            song.is_playing = True
-            song.start_time = time.time()
-            song.last_beat_time = song.start_time
-            song.current_beat = 0  # Start at 0, will increment to 1 on first beat
-            self.current_song = song
+
+        # Skip if same file already playing
+        if self.current_song and self.current_song.is_playing:
+            if os.path.abspath(self.current_song.filepath) == os.path.abspath(song.filepath):
+                return True
+            # Fade out current and schedule next
+            try:
+                pygame.mixer.music.fadeout(int(fade_out_ms))
+            except Exception:
+                pygame.mixer.music.stop()
+            self.current_song.is_playing = False
+            self._pending_song = song
+            self._pending_start_time = time.time() + (fade_out_ms / 1000.0)
+            self._pending_fade_in_ms = int(fade_in_ms)
             return True
-        except:
-            print(f"Error: Could not load '{song.filepath}'")
-            return False
+        else:
+            # Play immediately with optional fade-in
+            try:
+                pygame.mixer.music.load(song.filepath)
+                self._apply_music_volume()
+                pygame.mixer.music.play(-1, fade_ms=int(fade_in_ms))
+                song.is_playing = True
+                song.start_time = time.time()
+                song.last_beat_time = song.start_time
+                song.current_beat = 0
+                self.current_song = song
+                return True
+            except Exception as e:
+                print(f"Error: Could not load '{song.filepath}': {e}")
+                return False
     
     def stop_song(self):
-        """Stop the currently playing song"""
-        pygame.mixer.music.stop()
+        """Stop the currently playing song (fade out)"""
+        try:
+            pygame.mixer.music.fadeout(500)
+        except Exception:
+            pygame.mixer.music.stop()
         if self.current_song:
             self.current_song.is_playing = False
         self.current_song = None
     
     def update(self):
-        """Update beat counter - call this every frame"""
+        """Update beat counter and handle pending crossfades - call every frame"""
+        # Handle scheduled song start after fade-out
+        if self._pending_song and time.time() >= self._pending_start_time:
+            try:
+                pygame.mixer.music.load(self._pending_song.filepath)
+                self._apply_music_volume()
+                pygame.mixer.music.play(-1, fade_ms=self._pending_fade_in_ms)
+                self._pending_song.is_playing = True
+                self._pending_song.start_time = time.time()
+                self._pending_song.last_beat_time = self._pending_song.start_time
+                self._pending_song.current_beat = 0
+                self.current_song = self._pending_song
+            except Exception as e:
+                print(f"Error: Could not load '{self._pending_song.filepath}': {e}")
+                self.current_song = None
+            finally:
+                self._pending_song = None
+                self._pending_start_time = 0.0
+                self._pending_fade_in_ms = 0
+
         if not self.current_song or not self.current_song.is_playing:
             return
         
@@ -283,6 +351,33 @@ class AudioSystem:
             return (screen_w // 2 - 50, screen_h // 2)
         else:
             return (screen_w - 100 - offset_x, screen_h - 80 - offset_y)
+
+    # ==================== VOLUME HELPERS ====================
+    def set_volumes(self, master_volume, music_volume, sfx_volume):
+        """Apply volume settings and push them to the mixer"""
+        self.master_volume = self._clamp(master_volume)
+        self.music_volume = self._clamp(music_volume)
+        self.sfx_volume = self._clamp(sfx_volume)
+        self._apply_music_volume()
+
+    def get_sfx_volume(self):
+        return self.master_volume * self.sfx_volume
+
+    def apply_sfx_volume(self, sound):
+        try:
+            sound.set_volume(self.get_sfx_volume())
+        except Exception:
+            pass
+
+    def _apply_music_volume(self):
+        try:
+            pygame.mixer.music.set_volume(self.master_volume * self.music_volume)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _clamp(value):
+        return max(0.0, min(1.0, float(value)))
 
 # =============================================================================
 # USAGE EXAMPLE
@@ -388,9 +483,14 @@ class MusicManager:
     
     @staticmethod
     def get_random_song(level_name):
-        """Get a random song for the given level"""
-        songs = MusicManager.LEVEL_MUSIC.get(level_name, [MusicManager.DEFAULT_MUSIC["exploration"]])
-        return random.choice(songs) if songs else MusicManager.DEFAULT_MUSIC["exploration"]
+        """Get a random song ID for the given level; fallback to any SONGS."""
+        songs = MusicManager.LEVEL_MUSIC.get(level_name)
+        if songs:
+            return random.choice(songs)
+        # Fallback: choose any registered song
+        if SONGS:
+            return random.choice(list(SONGS.keys()))
+        return MusicManager.DEFAULT_MUSIC["exploration"]
     
     @staticmethod
     def get_song_for_level(level_name):

@@ -135,7 +135,7 @@ class Wall(Interactable):
             for i, lvl in enumerate(game.level_files)
             if i != game.current_level_index
         ]
-        game.travel_menu = TravelMenu(game.font, destinations)
+        game.travel_menu = TravelMenu(game.font, destinations, game.settings)
         game.pause_player_physics()
         game.active_menu = "travel"
     

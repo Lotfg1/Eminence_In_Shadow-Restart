@@ -15,7 +15,7 @@ import pygame
 from Assets.RhythmBattle import RhythmTiming  # Timing windows (PERFECT/GOOD/MISS) and BPM threshold
 
 
-def draw_beat_indicators(self, screen, font, enemies_nearby=False):
+def draw_beat_indicators(self, screen, font):
     """
     Draw a tiny Osu-style rhythm indicator circle in the top-right corner.
     
@@ -26,7 +26,6 @@ def draw_beat_indicators(self, screen, font, enemies_nearby=False):
     Args:
         screen (pygame.Surface): Screen surface to draw on
         font (pygame.font.Font): Font for text rendering (unused but kept for API consistency)
-        enemies_nearby (bool): Only display the circle when enemies are nearby for cleaner UI
     
     Returns:
         None
@@ -35,9 +34,7 @@ def draw_beat_indicators(self, screen, font, enemies_nearby=False):
     if not self.audio_system.current_song:
         return
     
-    # Only render circle when enemies are actively in the level (prevents UI clutter)
-    if not enemies_nearby:
-        return
+
     
     # ===== BEAT CYCLE CONFIGURATION =====
     # Determine beat cycle length based on BPM (higher BPM = faster timing)

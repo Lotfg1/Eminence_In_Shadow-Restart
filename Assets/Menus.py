@@ -6,23 +6,29 @@ import os
 # BASE MENU
 # ----------------------------
 class BaseMenu:
-    def __init__(self, options, font, width=400, height=250):
+    def __init__(self, options, font, settings=None, width=400, height=250):
         self.options = options
         self.selected = 0
         self.font = font
+        self.settings = settings
         self.surface = pygame.Surface((width, height))
         self.rect = self.surface.get_rect()
 
     def handle_input(self, event):
         if event.type != pygame.KEYDOWN:
             return None
-        if event.key == pygame.K_w:
+        kb = self.settings.keybinds if self.settings else {}
+        up = kb.get("Jump", pygame.K_w)
+        down = kb.get("MoveDown", pygame.K_s)
+        select_keys = {kb.get("Interact", pygame.K_e), pygame.K_RETURN}
+        back = kb.get("Pause", pygame.K_ESCAPE)
+        if event.key == up:
             self.selected = (self.selected - 1) % len(self.options)
-        elif event.key == pygame.K_s:
+        elif event.key == down:
             self.selected = (self.selected + 1) % len(self.options)
-        elif event.key in (pygame.K_RETURN, pygame.K_e):
+        elif event.key in select_keys:
             return self.options[self.selected][1]
-        elif event.key == pygame.K_ESCAPE:
+        elif event.key == back:
             return "close"
 
     def draw(self, screen):
@@ -37,8 +43,9 @@ class BaseMenu:
 # START MENU
 # ----------------------------
 class StartMenu:
-    def __init__(self, font):
+    def __init__(self, font, settings=None):
         self.font = font
+        self.settings = settings
         # Check if save file exists
         save_exists = os.path.exists("save_data.json")
         if save_exists:
@@ -69,11 +76,17 @@ class StartMenu:
 
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
-            if event.key == pygame.K_w:
+            kb = self.settings.keybinds if self.settings else {}
+            up = kb.get("Jump", pygame.K_w)
+            down = kb.get("MoveDown", pygame.K_s)
+            select_keys = {kb.get("Interact", pygame.K_e), pygame.K_RETURN}
+            back = kb.get("Pause", pygame.K_ESCAPE)
+            
+            if event.key == up:
                 self.selected = (self.selected - 1) % len(self.options)
-            elif event.key == pygame.K_s:
+            elif event.key == down:
                 self.selected = (self.selected + 1) % len(self.options)
-            elif event.key in (pygame.K_RETURN, pygame.K_e):
+            elif event.key in select_keys:
                 option = self.options[self.selected]
                 if option == "Continue":
                     return "continue"
@@ -83,8 +96,8 @@ class StartMenu:
                     return "settings"
                 elif option == "Quit":
                     return "quit"
-            elif event.key == pygame.K_ESCAPE:
-                return "quit"  # Escape from start menu quits game
+            elif event.key == back:
+                return "quit"  # Escape/Back quits game
 
     def draw(self, screen):
         # Draw start menu
@@ -122,8 +135,9 @@ class StartMenu:
 # PAUSE MENU (fills top of screen)
 # ----------------------------
 class PauseMenu:
-    def __init__(self, font, screen_width):
+    def __init__(self, font, screen_width, settings=None):
         self.font = font
+        self.settings = settings
         self.options = ["Inventory", "Status", "Options", "Combos", "Save Game", "Go Back", "Quit"]
         self.selected = 0
         self.width = screen_width  # Full width
@@ -134,12 +148,17 @@ class PauseMenu:
     def handle_input(self, event):
         if event.type != pygame.KEYDOWN:
             return None
-        # Use A and D for left/right navigation
-        if event.key == pygame.K_a:
+        kb = self.settings.keybinds if self.settings else {}
+        left = kb.get("MoveLeft", pygame.K_a)
+        right = kb.get("MoveRight", pygame.K_d)
+        select_keys = {kb.get("Interact", pygame.K_e), pygame.K_RETURN, pygame.K_SPACE}
+        back = kb.get("Pause", pygame.K_ESCAPE)
+        # Left/right navigation
+        if event.key == left:
             self.selected = (self.selected - 1) % len(self.options)
-        elif event.key == pygame.K_d:
+        elif event.key == right:
             self.selected = (self.selected + 1) % len(self.options)
-        elif event.key in (pygame.K_RETURN, pygame.K_e, pygame.K_SPACE):
+        elif event.key in select_keys:
             choice = self.options[self.selected]
             if choice == "Quit":
                 return "quit"
@@ -149,10 +168,12 @@ class PauseMenu:
                 return "settings"
             elif choice == "Save Game":
                 return "save_game"
+            elif choice == "Inventory":
+                return "Combos"
             else:
                 return choice
-        elif event.key == pygame.K_ESCAPE:
-            return "resume"  # Escape from pause menu resumes game
+        elif event.key == back:
+            return "resume"  # Back resumes game
 
     def draw(self, screen):
         self.surface.fill((50, 50, 50))
@@ -186,16 +207,16 @@ class PauseMenu:
 # MERCHANT MENU
 # ----------------------------
 class MerchantMenu(BaseMenu):
-    def __init__(self, font):
-        super().__init__([("Buy", "buy"), ("Sell", "sell"), ("Leave", "close")], font)
+    def __init__(self, font, settings=None):
+        super().__init__([("Buy", "buy"), ("Sell", "sell"), ("Leave", "close")], font, settings)
 
 # ----------------------------
 # TRAVEL MENU
 # ----------------------------
 class TravelMenu(BaseMenu):
-    def __init__(self, font, destinations):
+    def __init__(self, font, destinations, settings=None):
         options = [(name, idx) for name, idx in destinations]
-        super().__init__(options, font)
+        super().__init__(options, font, settings)
 
 # ----------------------------
 # SETTINGS MENU (with zoom control)
@@ -213,17 +234,25 @@ class SettingsMenu:
         if event.type != pygame.KEYDOWN:
             return None
 
+        kb = self.settings.keybinds if self.settings else {}
+        up = kb.get("Jump", pygame.K_w)
+        down = kb.get("MoveDown", pygame.K_s)
+        left = kb.get("MoveLeft", pygame.K_a)
+        right = kb.get("MoveRight", pygame.K_d)
+        select_keys = {kb.get("Interact", pygame.K_e), pygame.K_RETURN}
+        back = kb.get("Pause", pygame.K_ESCAPE)
+
         # If remapping a key, capture it
         if self.waiting_for_key:
             self.settings.set_keybind(self.waiting_for_key, event.key)
             self.waiting_for_key = None
             return None
 
-        if event.key == pygame.K_w:
+        if event.key == up:
             self.selected = (self.selected - 1) % len(self.options)
-        elif event.key == pygame.K_s:
+        elif event.key == down:
             self.selected = (self.selected + 1) % len(self.options)
-        elif event.key == pygame.K_RETURN or event.key == pygame.K_e:
+        elif event.key in select_keys:
             choice = self.options[self.selected]
             if choice == "Back":
                 return "close"
@@ -232,6 +261,7 @@ class SettingsMenu:
             elif choice in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = choice.lower().replace(" ", "_")
                 self.settings.set_audio(key, min(1.0, self.settings.audio[key] + 0.1))
+                return "audio_changed"
             elif choice == "Zoom Level":
                 # Cycle through zoom levels
                 try:
@@ -247,11 +277,12 @@ class SettingsMenu:
                     print(f"Zoom error: {e}")
             elif choice == "Keybinds":
                 return "keybinds"
-        elif event.key == pygame.K_a:
+        elif event.key == left:
             choice = self.options[self.selected]
             if choice in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = choice.lower().replace(" ", "_")
                 self.settings.set_audio(key, max(0.0, self.settings.audio[key] - 0.1))
+                return "audio_changed"
             elif choice == "Zoom Level":
                 # Cycle backwards through zoom levels
                 try:
@@ -265,11 +296,12 @@ class SettingsMenu:
                     return "zoom_changed"
                 except Exception as e:
                     print(f"Zoom error: {e}")
-        elif event.key == pygame.K_d:
+        elif event.key == right:
             choice = self.options[self.selected]
             if choice in ["Master Volume", "Music Volume", "SFX Volume"]:
                 key = choice.lower().replace(" ", "_")
                 self.settings.set_audio(key, min(1.0, self.settings.audio[key] + 0.1))
+                return "audio_changed"
             elif choice == "Zoom Level":
                 # Cycle through zoom levels
                 try:
@@ -283,8 +315,8 @@ class SettingsMenu:
                     return "zoom_changed"
                 except Exception as e:
                     print(f"Zoom error: {e}")
-        elif event.key == pygame.K_ESCAPE:
-            return "close"  # Escape from settings returns to previous menu
+        elif event.key == back:
+            return "close"  # Back to previous menu
 
         return None
 
@@ -469,3 +501,142 @@ class KeyBindsMenu:
 
         rect = surf.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
         screen.blit(surf, rect.topleft)
+
+
+"""
+
+
+
+Jamil 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+class ScrollableLayout:
+    def __init__(self):
+        # Default scroll state
+        self.scroll_offset = 0
+        self.scroll_speed = 20
+        self.max_scroll = 850  # How far down you can scroll
+
+    # Backwards-compatible init (if called elsewhere)
+    def init(self):
+        self.__init__()
+
+    def handle_scroll(self, event):
+        """Handle mouse wheel scrolling"""
+        if event.type == pygame.MOUSEWHEEL:
+            self.scroll_offset -= event.y * self.scroll_speed
+            # Clamp scroll offset
+            self.scroll_offset = max(0, min(self.scroll_offset, self.max_scroll))
+
+    def handle_input(self, event):
+        """Allow menu handler to process scroll/escape."""
+        self.handle_scroll(event)
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            return "close"
+        return None
+
+    def draw(self, screen):
+        
+        # Define colors
+        BLACK = (0, 0, 0)
+        GREY = (75, 75, 85)
+        DARK_GREY = (90, 92, 99)
+        PURPLE = (63, 48, 75)
+        WHITE = (255, 255, 255)
+        SCREEN_WIDTH = screen.get_width()
+        SCREEN_HEIGHT = screen.get_height()
+
+        # Calculate center offset (shifted left)
+        center_x = SCREEN_WIDTH // 2 - 180
+
+        # Fill background with black
+        screen.fill(BLACK)
+
+        # Apply scroll offset to y positions
+        y_offset = -self.scroll_offset
+
+        # Top grey instruction box
+        box_width = 586
+        box_x = center_x - box_width // 2
+        pygame.draw.rect(screen, DARK_GREY, (box_x, 76 + y_offset, box_width, 60))
+
+        # Add "Instructions" text to top box
+        font = pygame.font.Font(None, 36)
+        text = font.render("Instructions", True, WHITE)
+        text_rect = text.get_rect(center=(center_x, 106 + y_offset))
+        screen.blit(text, text_rect)
+
+        # First purple game area
+        purple_width = 712
+        purple_x = center_x - purple_width // 2
+        pygame.draw.rect(screen, PURPLE, (purple_x, 172 + y_offset, purple_width, 205))
+
+        # Middle grey title box (separated from first purple box)
+        divider_width = 588
+        divider_x = center_x - divider_width // 2
+        pygame.draw.rect(screen, GREY, (divider_x, 407 + y_offset, divider_width, 60))
+
+    # Second purple game area
+        pygame.draw.rect(screen, PURPLE, (purple_x, 497 + y_offset, purple_width, 268))
+
+    # === SECOND SET OF BOXES (below the first set) ===
+        second_set_offset = 850  # Distance between sets
+
+    # Second instruction box
+        pygame.draw.rect(screen, DARK_GREY, (box_x, 76 + y_offset + second_set_offset, box_width, 60))
+        text2 = font.render("Instructions", True, WHITE)
+        text_rect2 = text2.get_rect(center=(center_x, 106 + y_offset + second_set_offset))
+        screen.blit(text2, text_rect2)
+
+    # Third purple area
+        pygame.draw.rect(screen, PURPLE, (purple_x, 172 + y_offset + second_set_offset, purple_width, 205))
+
+    # Second middle grey title box (separated)
+        pygame.draw.rect(screen, GREY, (divider_x, 407 + y_offset + second_set_offset, divider_width, 60))
+
+    # Fourth purple area
+        pygame.draw.rect(screen, PURPLE, (purple_x, 497 + y_offset + second_set_offset, purple_width, 268))
+
+
+# ----------------------------
+# COMBOS MENU (uses ScrollableLayout)
+# ----------------------------
+class CombosMenu:
+    def __init__(self, font, combo_system=None):
+        self.font = font
+        self.combo_system = combo_system
+        self.layout = ScrollableLayout()
+        # Ensure scroll state is initialized
+        if hasattr(self.layout, "init"):
+            self.layout.init()
+
+    def handle_input(self, event):
+        # Allow mouse wheel scrolling
+        if hasattr(self.layout, "handle_scroll"):
+            self.layout.handle_scroll(event)
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+            return "close"
+        return None
+
+    def draw(self, screen):
+        # Use the existing ScrollableLayout rendering
+        if hasattr(self.layout, "draw"):
+            self.layout.draw(screen)
+        # Simple instruction footer
+        instructions = self.font.render("ESC: Back", True, (200, 200, 200))
+        screen.blit(instructions, (screen.get_width() // 2 - instructions.get_width() // 2, screen.get_height() - 40))
+
+

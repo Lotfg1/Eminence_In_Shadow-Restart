@@ -96,6 +96,7 @@ class RhythmBattleSystem:
     """Main rhythm battle system - integrates with game"""
     def __init__(self, audio_system):
         self.audio_system = audio_system
+        self.combo_system = ComboSystem()
         self.combo_chain = []           # List of recent attacks
         self.combo_count = 0            # Current combo count
         self.last_attack_time = 0       # Time of last attack
@@ -109,6 +110,8 @@ class RhythmBattleSystem:
         # Attack state
         self.current_attack = None
         self.attack_cooldown = 0
+        self.combo_finisher_bonus = 1.0
+        self.combo_finisher_timer = 0.0
         
         # Combo sequences (for special moves)
         self.input_buffer = []          # Track recent inputs for combos
@@ -154,13 +157,40 @@ class RhythmBattleSystem:
             "y_offset": 0
         })
         
-        # Set cooldown based on attack type
-        variant = ComboSystem.COMBO_VARIANTS.get(direction, ComboSystem.COMBO_VARIANTS["neutral"])
+        # Determine rhythm attack tier based on BPM (fast → shorter attacks)
+        rhythm_type = "quarter_slash"
+        seconds_per_beat = 0.5
+        bpm = 120
         if self.audio_system.current_song:
+            bpm = self.audio_system.current_song.bpm
             seconds_per_beat = self.audio_system.current_song.seconds_per_beat
-            self.attack_cooldown = variant["total_beats"] * seconds_per_beat
+        if bpm >= 150:
+            rhythm_type = "eighth_stab"
+        elif bpm <= 100:
+            rhythm_type = "half_heavy"
         else:
-            self.attack_cooldown = variant["total_beats"] * 0.5  # Default 0.5 seconds per beat
+            rhythm_type = "quarter_slash"
+
+        rhythm_attack = ComboSystem.get_rhythm_attack(rhythm_type)
+
+        # Set cooldown from rhythm attack total beats, 0.2s faster
+        self.attack_cooldown = max(0.05, rhythm_attack["total_beats"] * seconds_per_beat - 0.2)
+
+        # Record attack in combo system using rhythm symbol and check sequences
+        self.combo_system.record_attack(rhythm_attack["symbol"], self.audio_system.current_beat)
+        combo_hit = self.combo_system.check_combo_sequences()
+        if combo_hit:
+            data = combo_hit["data"]
+            # Apply a temporary finisher bonus multiplier
+            self.combo_finisher_bonus = data.get("damage_multiplier", 1.0)
+            self.combo_finisher_timer = 0.5
+            # Visual feedback for combo
+            self.feedback_displays.append({
+                "text": data.get("name", "COMBO"),
+                "color": data.get("color", (255, 255, 255)),
+                "timer": 0.6,
+                "y_offset": -10
+            })
         
         self.current_attack = attack
         return attack
@@ -222,8 +252,8 @@ class RhythmBattleSystem:
         
         timing_mult = self.current_attack.multiplier
         combo_mult = self.get_combo_multiplier()
-        
-        return timing_mult * combo_mult
+        finisher_mult = self.combo_finisher_bonus
+        return timing_mult * combo_mult * finisher_mult
     
     def update(self, dt, current_time):
         """Update rhythm system"""
@@ -233,6 +263,11 @@ class RhythmBattleSystem:
         # Update cooldown
         if self.attack_cooldown > 0:
             self.attack_cooldown = max(0, self.attack_cooldown - dt)
+        # Decay finisher bonus after short duration
+        if self.combo_finisher_timer > 0:
+            self.combo_finisher_timer = max(0, self.combo_finisher_timer - dt)
+            if self.combo_finisher_timer == 0:
+                self.combo_finisher_bonus = 1.0
         
         # Update feedback displays
         for feedback in self.feedback_displays[:]:
@@ -292,92 +327,53 @@ class RhythmBattleSystem:
         screen.blit(mult_text, mult_rect)
     
     def draw_beat_indicators(self, screen, font, enemies_nearby=False):
-        """Draw Osu-style rhythm circle - tiny indicator in top-right
-        
-        Args:
-            screen: Surface to draw on
-            font: Font for text
-            enemies_nearby: Only show circle when enemies are near
-        """
+        """Draw Osu-style rhythm circle - bottom-center; hits inner exactly on beat"""
         if not self.audio_system.current_song:
             return
-        
-        # Only show circle when enemies are nearby
-        if not enemies_nearby:
-            return
-        
-        # Get current beat info and determine beat cycle duration
+        import time
         bpm = self.audio_system.current_song.bpm
-        is_high_bpm = bpm > 100
-        
-        # Use 2-beat cycle for high BPM, 1-beat cycle for normal BPM
-        beat_cycle_length = 2.0 if is_high_bpm else 1.0
-        
-        # Get beat progress within the current cycle (0.0 to 1.0)
-        current_beat = self.audio_system.current_beat
-        beat_in_cycle = (current_beat % beat_cycle_length) / beat_cycle_length
-        
-        # Tiny circle in top-right
-        center_x = screen.get_width() - 40
-        center_y = 40
-        
-        inner_radius = 8  # Static target circle (hitcircle)
-        max_outer_radius = 22  # Starting size for outer circle (approach circle)
-        beat_seconds = beat_cycle_length * 60.0 / bpm
-        shrink_per_sec = (max_outer_radius - inner_radius) / max(beat_seconds, 0.001)
+        seconds_per_beat = self.audio_system.current_song.seconds_per_beat
+        last_beat = self.audio_system.current_song.last_beat_time
+        now = time.time()
+        elapsed = max(0.0, now - last_beat)
+        time_until_next = max(0.0, seconds_per_beat - elapsed)
+        ratio = time_until_next / max(seconds_per_beat, 1e-6)  # 1.0 right after beat, 0.0 at the beat
 
-        # Time delta for smooth shrinking
-        now = pygame.time.get_ticks() / 1000.0
-        if self.circle_last_time is None:
-            self.circle_last_time = now
-        dt = now - self.circle_last_time
-        self.circle_last_time = now
+        # Bottom-center position
+        center_x = screen.get_width() // 2
+        center_y = screen.get_height() - 40
 
-        # Reset at the start of a new beat cycle
-        if self.outer_radius_state is None or beat_in_cycle < self.prev_beat_in_cycle:
-            self.outer_radius_state = max_outer_radius
+        inner_radius = 8
+        max_outer_radius = 22
+        outer_radius = int(inner_radius + (max_outer_radius - inner_radius) * ratio)
 
-        # Shrink radius over time until it reaches the inner radius
-        # The shrink should complete exactly at beat_in_cycle = 0 (the next beat)
-        # At beat_in_cycle = 1.0 (end of cycle), outer_radius should be at inner_radius
-        # Use beat_in_cycle to directly control position instead of time for perfect alignment
-        progress = beat_in_cycle  # 0 at start (just reset), 1 at next beat
-        outer_radius = int(max_outer_radius - (max_outer_radius - inner_radius) * progress)
-        outer_radius = max(inner_radius, outer_radius)
-        self.prev_beat_in_cycle = beat_in_cycle
-        
-        # Create transparent surface for circles (60x60 for tiny version)
         surface_size = (60, 60)
         circle_surface = pygame.Surface(surface_size, pygame.SRCALPHA)
         center_offset = (30, 30)
-        
-        # Determine color based on timing accuracy
-        # Map beat_in_cycle to timing window - when outer circle is close to inner (perfect window)
-        time_from_beat_percent = abs(beat_in_cycle - 1.0)  # 0 when beat hits, 1 when far
-        
-        if time_from_beat_percent <= (RhythmTiming.PERFECT_WINDOW / (beat_cycle_length * 60 / bpm)):
-            # Perfect window - gold (bright)
+
+        # Color feedback based on closeness to beat
+        # Near the beat (ratio ~ 0) → Perfect/Good/Miss windows
+        time_to_beat = time_until_next
+        if time_to_beat <= RhythmTiming.PERFECT_WINDOW:
             outer_color = (255, 215, 0, 220)
-        elif time_from_beat_percent <= (RhythmTiming.GOOD_WINDOW / (beat_cycle_length * 60 / bpm)):
-            # Good window - green
+        elif time_to_beat <= RhythmTiming.GOOD_WINDOW:
             outer_color = (100, 255, 100, 200)
-        elif time_from_beat_percent <= (RhythmTiming.MISS_THRESHOLD / (beat_cycle_length * 60 / bpm)):
-            # Miss window - red
+        elif time_to_beat <= RhythmTiming.MISS_THRESHOLD:
             outer_color = (255, 100, 100, 180)
         else:
-            # Too far - gray
             outer_color = (150, 150, 150, 120)
-        
-        # Draw outer approach circle (2px stroke for tiny version)
+
         pygame.draw.circle(circle_surface, outer_color, center_offset, outer_radius, 2)
-        
-        # Draw inner static hitcircle (1px stroke)
         pygame.draw.circle(circle_surface, (200, 200, 200, 220), center_offset, inner_radius, 1)
-        
-        # Draw filled center of hitcircle
-        pygame.draw.circle(circle_surface, (80, 80, 80, 100), center_offset, max(1, inner_radius - 3), 0)
-        
-        # Blit to screen
+        pygame.draw.circle(circle_surface, (80, 80, 80, 100), center_offset, max(1, inner_radius - 2), 0)
+
+        # Subtle glow when within last 15% of time to beat
+        if ratio < 0.15:
+            glow_strength = (0.15 - ratio) / 0.15
+            glow_size = int(3 * glow_strength)
+            glow_alpha = int(120 * glow_strength)
+            pygame.draw.circle(circle_surface, (255, 215, 0, glow_alpha), center_offset, inner_radius + glow_size, 1)
+
         screen.blit(circle_surface, (center_x - 30, center_y - 30))
     
     def reset_combo(self):

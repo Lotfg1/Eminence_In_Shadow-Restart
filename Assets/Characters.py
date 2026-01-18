@@ -253,6 +253,18 @@ class MainCharacter(CharacterBase):
         
         # Attack system
         self.current_attack = None
+        self.is_attacking = False
+        self.attack_frame = 0
+        self.attack_start_beat = 0
+        self.attack_windup_beats = 0
+        self.attack_active_beats = 0
+        self.attack_recovery_beats = 0
+        self.current_attack_variant = None
+        self.last_attack_time = 0
+        self.combo_timeout = 0.5
+        self.is_comboing = False
+        self.active_combo_sequence = None
+        self.combo_flash_timer = 0
     
     def gain_experience(self, amount):
         """Gain experience points and level up if enough"""
