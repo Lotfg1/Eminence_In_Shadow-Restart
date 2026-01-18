@@ -20,8 +20,8 @@ class RhythmTiming:
     """Defines timing windows for rhythm accuracy"""
     # Timing windows (in seconds from perfect beat)
     PERFECT_WINDOW = 0.04   # ±40ms = Perfect hit (stricter)
-    GOOD_WINDOW = 0.08      # ±80ms = Good hit (stricter)
-    MISS_THRESHOLD = 0.15   # ±150ms = Still registers but "Miss"
+    GOOD_WINDOW = 0.15      # ±150ms = Good hit (more lenient)
+    MISS_THRESHOLD = 0.25   # ±250ms = Still registers but "Miss"
     
     # Damage multipliers based on timing
     PERFECT_MULTIPLIER = 1.5   # 50% bonus damage
@@ -380,3 +380,9 @@ class RhythmBattleSystem:
         """Reset combo chain (e.g., when hit by enemy)"""
         self.combo_chain.clear()
         self.combo_count = 0
+    
+    def reset_beat_tracking(self):
+        """Reset rhythm circle beat tracking when song changes"""
+        self.outer_radius_state = None
+        self.prev_beat_in_cycle = 0.0
+        self.circle_last_time = None

@@ -341,10 +341,16 @@ class Game:
         # Play the song ID (which has correct BPM set)
         try:
             self.audio_system.play_song(level_music)
+            # Reset rhythm circle BPM when song changes
+            if hasattr(self.rhythm_system, 'reset_beat_tracking'):
+                self.rhythm_system.reset_beat_tracking()
         except Exception as e:
             print(f"Error loading music: {e}")
             # Fallback to menu theme if song fails to load
-            self.audio_system.play_song("menu_theme")
+            try:
+                self.audio_system.play_song("menu_theme")
+            except:
+                pass
     
     def save_game(self):
         """Save current game state to a JSON file"""
@@ -947,7 +953,7 @@ class Game:
 
         # Protect against missing method in case of stale class definitions
         if hasattr(self.player, "update_attack"):
-            self.player.update_attack(self.audio_system.current_beat, bpm)
+            self.player.update_attack(self.audio_system.current_beat, bpm, dt)
         
         # ========== Update Enemies ==========
         rects = self.get_collision_rects()
@@ -1144,29 +1150,49 @@ class Game:
                 coin.draw(self.screen, self.camera_x, self.camera_y)
 
     def _spawn_enemy_drops(self, enemy, count=5):
-        """Spawn simple loot orbs that fan out on enemy death"""
-        # Create drops that spray outward in a fan pattern
+        """Spawn coins that fan out on enemy death"""
+        from Assets.Interactables import Coin
+        
+        # Calculate experience based on enemy level
+        exp_table = {
+            1: 1, 2: 2, 3: 4, 4: 6, 5: 10,
+            6: 13, 7: 16, 8: 20, 9: 24, 10: 30
+        }
+        enemy_level = enemy.stats.get('Level', 1)
+        exp_reward = exp_table.get(enemy_level, 5)
+        
+        # Give experience to player
+        self.player.gain_experience(exp_reward)
+        print(f"Enemy level {enemy_level} defeated! Gained {exp_reward} experience.")
+        
+        # Create coins that spray outward in a fan pattern
         for i in range(count):
-            # Spread drops in a fan (mostly upward and sideways)
+            # Spread coins in a fan (mostly upward and sideways)
             angle = random.uniform(-math.pi * 0.7, -math.pi * 0.3)  # Spray upward-ish
             # Vary speed for visual variety
             speed = random.uniform(300, 500)
             
-            # Create a drop with position, velocity, and appearance
-            self.drops.append({
-                "x": enemy.rect.centerx,  # Start at enemy center
-                "y": enemy.rect.centery,
-                "vx": math.cos(angle) * speed,  # Horizontal velocity
-                "vy": math.sin(angle) * speed,  # Vertical velocity (negative = up)
-                "life": 3.0,  # Lives for 3 seconds
-                "radius": 8,  # Bigger size
-                "color": (255, 215, 0)  # Bright gold color
-            })
+            # Create a coin at the enemy center
+            coin = Coin(
+                x=int(enemy.rect.centerx),
+                y=int(enemy.rect.centery),
+                gold_value=random.randint(1, 3)  # Each coin worth 1-3 gold
+            )
+            
+            # Add initial velocity (spraying outward)
+            coin.vx = math.cos(angle) * speed
+            coin.vy = math.sin(angle) * speed
+            coin.life = 3.0  # Lives for 3 seconds before disappearing
+            
+            # Add to drops for physics simulation
+            self.drops.append(coin)
 
     def _update_drops(self, dt):
         """Update all drops - apply physics and remove expired ones"""
         if not self.drops:
             return  # No drops to update
+        
+        from Assets.Interactables import Coin
         
         # Physics constants
         gravity = 800  # Strong gravity for satisfying arc
@@ -1175,42 +1201,92 @@ class Game:
         # Keep only drops that are still alive
         alive = []
         for drop in self.drops:
-            # Apply physics
-            drop["vy"] += gravity * dt  # Gravity pulls down
-            drop["vx"] *= damping  # Slow down horizontal movement
-            drop["vy"] *= damping  # Slow down vertical movement
-            
-            # Move the drop
-            drop["x"] += drop["vx"] * dt
-            drop["y"] += drop["vy"] * dt
-            
-            # Count down lifetime
-            drop["life"] -= dt
-            
-            # Keep drop if it's still alive
-            if drop["life"] > 0:
-                alive.append(drop)
+            # Handle Coin objects
+            if isinstance(drop, Coin):
+                # Handle collection animation (float to player)
+                if drop.is_collecting:
+                    # Move towards player
+                    dx = drop.collect_target_x - drop.rect.centerx
+                    dy = drop.collect_target_y - drop.rect.centery
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    
+                    if distance < 10:
+                        # Coin reached player - collect it
+                        self.player.gold += drop.gold_value
+                        print(f"Picked up {drop.gold_value} gold! Total: {self.player.gold}")
+                        # Don't add to alive list (removes coin)
+                    else:
+                        # Move towards player
+                        move_amount = drop.collect_speed * dt
+                        if distance > 0:
+                            drop.rect.centerx += (dx / distance) * move_amount
+                            drop.rect.centery += (dy / distance) * move_amount
+                        alive.append(drop)
+                else:
+                    # Normal physics
+                    drop.vy += gravity * dt  # Gravity pulls down
+                    drop.vx *= damping  # Slow down horizontal movement
+                    drop.vy *= damping  # Slow down vertical movement
+                    
+                    # Move the coin
+                    drop.rect.x += drop.vx * dt
+                    drop.rect.y += drop.vy * dt
+                    
+                    # Update the original_y for bobbing animation (keeps it grounded while moving)
+                    drop.original_y = drop.rect.y
+                    
+                    # Count down lifetime
+                    drop.life -= dt
+                    
+                    # Check coin pickup collision with player
+                    if self.player.rect.colliderect(drop.rect):
+                        # Start collection animation
+                        drop.is_collecting = True
+                        drop.collect_target_x = self.player.rect.centerx
+                        drop.collect_target_y = self.player.rect.centery
+                        drop.vx = 0  # Stop physics
+                        drop.vy = 0
+                        alive.append(drop)
+                    elif drop.life > 0:
+                        # Keep coin if not picked up and still alive
+                        alive.append(drop)
+            else:
+                # Legacy dict-based drops (for backwards compatibility)
+                drop["vy"] += gravity * dt  # Gravity pulls down
+                drop["vx"] *= damping  # Slow down horizontal movement
+                drop["vy"] *= damping  # Slow down vertical movement
+                drop["x"] += drop["vx"] * dt
+                drop["y"] += drop["vy"] * dt
+                drop["life"] -= dt
+                if drop["life"] > 0:
+                    alive.append(drop)
         
         # Replace drop list with only alive drops
         self.drops = alive
 
     def _draw_drops(self):
         """Draw all drop circles on screen"""
+        from Assets.Interactables import Coin
         for drop in self.drops:
-            # Convert world position to screen position (accounting for camera)
-            screen_x = int(drop["x"] - self.camera_x)
-            screen_y = int(drop["y"] - self.camera_y)
-            screen_pos = (screen_x, screen_y)
-            
-            # Pulse effect based on lifetime
-            pulse = abs(math.sin(drop["life"] * 5)) * 0.3 + 0.7
-            radius = int(drop["radius"] * pulse)
-            
-            # Draw the drop as a filled circle with glow
-            pygame.draw.circle(self.screen, drop["color"], screen_pos, radius)
-            # Outer glow
-            glow_color = (255, 255, 150, 128)
-            pygame.draw.circle(self.screen, drop["color"], screen_pos, radius + 2, 1)
+            # If it's a Coin object, use its draw method
+            if isinstance(drop, Coin):
+                drop.draw(self.screen, self.camera_x, self.camera_y)
+            else:
+                # Legacy dict-based drops
+                # Convert world position to screen position (accounting for camera)
+                screen_x = int(drop["x"] - self.camera_x)
+                screen_y = int(drop["y"] - self.camera_y)
+                screen_pos = (screen_x, screen_y)
+                
+                # Pulse effect based on lifetime
+                pulse = abs(math.sin(drop["life"] * 5)) * 0.3 + 0.7
+                radius = int(drop["radius"] * pulse)
+                
+                # Draw the drop as a filled circle with glow
+                pygame.draw.circle(self.screen, drop["color"], screen_pos, radius)
+                # Outer glow
+                glow_color = (255, 255, 150, 128)
+                pygame.draw.circle(self.screen, drop["color"], screen_pos, radius + 2, 1)
 
     def _draw_enemies(self):
         """Draw enemies"""

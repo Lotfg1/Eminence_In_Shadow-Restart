@@ -355,15 +355,30 @@ class StatusMenu:
         self.font = font
         self.player = player
         self.title_font = pygame.font.SysFont(None, 48)
+        self.small_font = pygame.font.SysFont(None, 20)
+        self.allocatable_stats = ["Max_Health", "Attack_Damage", "M_Attack_Damage", "Defense"]
+        self.selected_stat = 0
         
     def handle_input(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 return "close"
+            elif event.key == pygame.K_w:
+                self.selected_stat = (self.selected_stat - 1) % len(self.allocatable_stats)
+            elif event.key == pygame.K_s:
+                self.selected_stat = (self.selected_stat + 1) % len(self.allocatable_stats)
+            elif event.key == pygame.K_PLUS or event.key == pygame.K_EQUALS:
+                # Allocate point to selected stat
+                if hasattr(self.player, 'free_stat_points') and self.player.free_stat_points > 0:
+                    stat_name = self.allocatable_stats[self.selected_stat]
+                    self.player.stats[stat_name] += 1
+                    if stat_name == "Max_Health":
+                        self.player.stats['Current_Health'] += 1
+                    self.player.free_stat_points -= 1
         return None
     
     def draw(self, screen):
-        width, height = 600, 500
+        width, height = 600, 550
         surf = pygame.Surface((width, height))
         surf.fill((40, 40, 40))
         
@@ -371,41 +386,38 @@ class StatusMenu:
         title = self.title_font.render("Character Stats", True, (255, 215, 0))
         surf.blit(title, (width // 2 - title.get_width() // 2, 20))
         
-        # Stats
-        y_offset = 80
-        stats_display = [
-            f"Health: {self.player.stats['Current_Health']} / {self.player.stats['Max_Health']}",
-            f"Mana: {self.player.stats['Current_Mana']} / {self.player.stats['Max_Mana']}",
-            "",
-            f"Attack Damage: {self.player.stats['Attack_Damage']}",
-            f"Magic Attack Damage: {self.player.stats['M_Attack_Damage']}",
-            f"Skill Attack Damage: {self.player.stats['Skill_Attack_Damage']}",
-            "",
-            f"Defense: {self.player.stats['Defense']}",
-            f"Magic Defense: {self.player.stats['M_Defense']}"
-        ]
+        # Free stat points
+        free_points = getattr(self.player, 'free_stat_points', 0)
+        points_text = self.font.render(f"Free Points: {free_points}", True, (255, 215, 0))
+        surf.blit(points_text, (50, 60))
         
-        for i, stat_text in enumerate(stats_display):
-            if stat_text:  # Skip empty strings
-                color = (255, 255, 255)
-                # Color code health and mana
-                if "Health:" in stat_text:
-                    health_percent = self.player.stats['Current_Health'] / self.player.stats['Max_Health']
-                    if health_percent > 0.5:
-                        color = (0, 255, 0)  # Green
-                    elif health_percent > 0.25:
-                        color = (255, 255, 0)  # Yellow
-                    else:
-                        color = (255, 0, 0)  # Red
-                elif "Mana:" in stat_text:
-                    color = (100, 150, 255)  # Blue
-                
-                text = self.font.render(stat_text, True, color)
-                surf.blit(text, (50, y_offset + i * 35))
+        # Display non-allocatable stats
+        y_offset = 100
+        health_text = self.font.render(f"Health: {self.player.stats['Current_Health']} / {self.player.stats['Max_Health']}", True, (100, 255, 100))
+        mana_text = self.font.render(f"Mana: {self.player.stats['Current_Mana']} / {self.player.stats['Max_Mana']}", True, (100, 150, 255))
+        skill_dmg_text = self.font.render(f"Skill Attack: {self.player.stats['Skill_Attack_Damage']}", True, (200, 200, 200))
+        
+        surf.blit(health_text, (50, y_offset))
+        surf.blit(mana_text, (50, y_offset + 35))
+        surf.blit(skill_dmg_text, (50, y_offset + 70))
+        
+        # Display allocatable stats (with selection highlight)
+        y_offset += 120
+        for i, stat_name in enumerate(self.allocatable_stats):
+            is_selected = i == self.selected_stat
+            color = (255, 215, 0) if is_selected else (200, 200, 200)
+            
+            stat_value = self.player.stats[stat_name]
+            display_name = stat_name.replace("_", " ")
+            stat_text = f"{display_name}: {stat_value} +"
+            text = self.font.render(stat_text, True, color)
+            surf.blit(text, (50, y_offset + i * 35))
         
         # Instructions
-        instructions = self.font.render("Press ESC to close", True, (200, 200, 200))
-        surf.blit(instructions, (width // 2 - instructions.get_width() // 2, height - 40))
+        inst1 = self.small_font.render("W/S: Select stat | +: Allocate point", True, (150, 150, 150))
+        inst2 = self.small_font.render("ESC: Close", True, (150, 150, 150))
+        surf.blit(inst1, (width // 2 - inst1.get_width() // 2, height - 60))
+        surf.blit(inst2, (width // 2 - inst2.get_width() // 2, height - 30))
         
         rect = surf.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
         screen.blit(surf, rect.topleft)

@@ -82,7 +82,7 @@ SONGS = {
     # Main battle theme - plays in Dark Forest
     "battle_theme": Song(
         name="Battle Theme - Dark Forest",
-        filepath="Assets/Music/Dark_Forest/OxT - HIGHEST.mp3",  # Put your battle music here!
+        filepath="Assets/Music/Dark_Forest/Kenichiro Suehiro - FIERCE ASSAULT.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True
@@ -91,7 +91,7 @@ SONGS = {
     # City theme - peaceful town music
     "city_theme": Song(
         name="City Theme",
-        filepath="Assets/Music/City/OxT - HIGHEST.mp3",  # Put your city music here!
+        filepath="Assets/Music/City/OxT - HIGHEST.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True
@@ -100,7 +100,7 @@ SONGS = {
     # Player room - calm ambience
     "calm_theme": Song(
         name="Calm Theme - Player Room",
-        filepath="Assets/Music/Player_Room/OxT - HIGHEST.mp3",  # Put your room music here!
+        filepath="Assets/Music/Player_Room/OxT - HIGHEST.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True
@@ -109,7 +109,7 @@ SONGS = {
     # Start menu music
     "menu_theme": Song(
         name="Menu Theme",
-        filepath="Assets/Music/Start_Menu/OxT - HIGHEST.mp3",  # Put your menu music here!
+        filepath="Assets/Music/Start_Menu/OxT - HIGHEST.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True
@@ -118,7 +118,7 @@ SONGS = {
     # For backwards compatibility
     "highest": Song(
         name="OxT - HIGHEST",
-        filepath="Assets/Music/OxT - HIGHEST.mp3",
+        filepath="Assets/Music/City/OxT - HIGHEST.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True

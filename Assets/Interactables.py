@@ -2,6 +2,7 @@
 import pygame
 import random
 import time
+import math
 from PIL import Image
 from Assets.Characters import SmallBandit
 class Interactable:
@@ -153,9 +154,28 @@ class Wall(Interactable):
 # COIN (Animated)
 # ----------------------------
 class Coin:
-    def __init__(self, x, y, width=32, height=32):
+    def __init__(self, x, y, width=32, height=32, gold_value=1):
         self.rect = pygame.Rect(x, y, width, height)
         self.collidable = False  # Coins don't block movement
+        self.gold_value = gold_value  # Amount of gold this coin gives
+        
+        # Bobbing animation (up/down movement)
+        self.bob_timer = 0
+        self.bob_speed = 3.0  # Speed of bobbing
+        self.bob_height = 8  # How far up/down to bob
+        self.original_y = y
+        
+        # Velocity for physics (set by spawn_enemy_drops)
+        self.vx = 0
+        self.vy = 0
+        self.life = float('inf')  # Lifetime (will be set by spawn_enemy_drops)
+        
+        # Collection animation (float to player when collected)
+        self.is_collecting = False  # True when player is collecting this coin
+        self.collect_target_x = 0
+        self.collect_target_y = 0
+        self.collect_speed = 400  # Pixels per second towards target
+        self.collect_timer = 0
         
         # Animation settings
         self.animation_timer = 0
@@ -199,7 +219,12 @@ class Coin:
         self.color = (255, 215, 0)  # Gold color
     
     def update(self, dt):
-        """Update animation state"""
+        """Update animation state and bobbing motion"""
+        # Update bobbing animation (smooth up/down motion)
+        self.bob_timer += dt * self.bob_speed
+        bob_offset = math.sin(self.bob_timer) * self.bob_height
+        self.rect.y = self.original_y + bob_offset
+        
         if self.is_animating:
             self.animation_frame += dt
             if self.animation_frame >= self.animation_duration:

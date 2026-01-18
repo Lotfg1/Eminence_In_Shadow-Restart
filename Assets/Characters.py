@@ -253,6 +253,7 @@ class MainCharacter(CharacterBase):
         
         # Attack system
         self.current_attack = None
+        self.current_attack_timer = 0  # Duration to keep attack active (seconds)
         self.is_attacking = False
         self.attack_frame = 0
         self.attack_start_beat = 0
@@ -265,6 +266,12 @@ class MainCharacter(CharacterBase):
         self.is_comboing = False
         self.active_combo_sequence = None
         self.combo_flash_timer = 0
+        
+        # Stat allocation system
+        self.free_stat_points = 0
+        
+        # Gold system
+        self.gold = 0
     
     def gain_experience(self, amount):
         """Gain experience points and level up if enough"""
@@ -284,7 +291,17 @@ class MainCharacter(CharacterBase):
         for stat_name, new_value in level_stats.items():
             self.stats[stat_name.replace('_', ' ').title().replace(' ', '_')] = new_value
         
+        # Grant free stat points for allocation
+        self.free_stat_points += 3
+        
         # Full heal on level up
+        self.stats['Current_Health'] = self.stats['Max_Health']
+        self.stats['Current_Mana'] = self.stats['Max_Mana']
+        
+        # Increase exp needed for next level
+        self.exp_for_next_level = int(self.exp_for_next_level * 1.2)
+        
+        print(f"Level up! Now level {self.level}. Gained 3 stat points!")
         self.stats['Current_Health'] = self.stats['Max_Health']
         self.stats['Current_Mana'] = self.stats['Max_Mana']
         
@@ -327,6 +344,7 @@ class MainCharacter(CharacterBase):
             "type": attack_type,
             "active": True
         }
+        self.current_attack_timer = 0.3  # Clear attack after 0.3 seconds
         
         return final_damage
     
@@ -354,10 +372,10 @@ class MainCharacter(CharacterBase):
         elif self.moving_left:
             self.facing_right = False
         
-        # Reduce speed to 30% while attacking
+        # Use slow speed if attack timer active, otherwise use normal speed
         original_speed = self.speed
-        if self.hit_stun_frames > 0 or (hasattr(self, 'current_attack') and self.current_attack):
-            self.speed = original_speed * 0.3
+        if self.current_attack_timer > 0 or self.hit_stun_frames > 0:
+            self.speed = 2  # Slow down to 2 pixels per frame while attacking
         
         # Call parent movement
         super().move(rects)
@@ -754,14 +772,25 @@ class LargeBandit(EnemyBase):
             'alpha': 100           # Transparency (0-255, lower = more transparent)
         }
     
-    def update_attack(self, current_beat, bpm):
+    def update_attack(self, current_beat, bpm, dt=0.016):
         """Update attack animation with beat-based timing
         
         Args:
             current_beat: Current musical beat (float)
             bpm: Current BPM of the music
+            dt: Delta time since last frame in seconds
         """
         import time
+        
+        # Update slowdown timer - decrement and clamp to 0
+        if self.current_attack_timer > 0:
+            self.current_attack_timer -= dt
+            if self.current_attack_timer < 0:
+                self.current_attack_timer = 0
+        
+        # Clear attack dict when timer expires
+        if self.current_attack_timer <= 0 and self.current_attack:
+            self.current_attack = None
         
         # Update hit stun
         if self.hit_stun_frames > 0:
