@@ -174,6 +174,9 @@ class Game:
         # Rhythm battle system
         self.rhythm_system = RhythmBattleSystem(self.audio_system)
         
+        # Track player health for damage detection (screen shake)
+        self.last_player_health = self.player.stats.get('Current_Health', 100)
+        
         # Load the starting level
         self.load_level(self.level_files[self.current_level_index])
 
@@ -207,6 +210,12 @@ class Game:
         self.images = {}
         if self.config.USE_IMAGES:
             self._load_images()
+        
+        # Screen shake system
+        self.shake_intensity = 0.0  # Current shake intensity (0.0-1.0)
+        self.shake_duration = 0.0   # Remaining shake duration in seconds
+        self.shake_offset_x = 0     # Current shake offset
+        self.shake_offset_y = 0
 
     def _load_images(self):
         """Load all images for sprites"""
@@ -241,6 +250,16 @@ class Game:
             self.zoom_speed = 0.01  # Very slow smooth zoom
         
         self.target_zoom = zoom_level
+
+    def trigger_screen_shake(self, intensity=0.5, duration=0.2):
+        """Trigger a screen shake effect
+        
+        Args:
+            intensity: How strong the shake is (0.0-1.0, multiplied by 5 pixels)
+            duration: How long the shake lasts in seconds
+        """
+        self.shake_intensity = min(1.0, max(0.0, intensity))
+        self.shake_duration = duration
 
     def _initialize_menus(self):
         """Initialize all menu objects"""
@@ -418,6 +437,10 @@ class Game:
         # Smoothly move camera to target (not instant)
         self.camera_x += (target_x - self.camera_x) * self.config.CAMERA_SMOOTHING
         self.camera_y += (target_y - self.camera_y) * self.config.CAMERA_SMOOTHING
+        
+        # Apply screen shake offset
+        self.camera_x += self.shake_offset_x
+        self.camera_y += self.shake_offset_y
 
     def _update_look_ahead(self, keys):
         """Update camera look-ahead offset based on player movement"""
@@ -919,11 +942,31 @@ class Game:
                         self.player.current_attack['knockback_y'],
                         stun_duration=0.3
                     )
+                    
+                    # Screen shake on finisher combo (5 hits = max combo)
+                    if self.rhythm_system.combo_count >= 5:
+                        self.trigger_screen_shake(intensity=0.8, duration=0.15)
             
             # Deactivate attack after one frame
             self.player.current_attack['active'] = False
         
-        # Remove dead enemies and spawn drops
+        # Update screen shake effect
+        if self.shake_duration > 0:
+            self.shake_duration -= dt
+            if self.shake_duration <= 0:
+                self.shake_intensity = 0.0
+                self.shake_offset_x = 0
+                self.shake_offset_y = 0
+            else:
+                # Apply screen shake with random offset
+                shake_amount = self.shake_intensity * 5  # Max 5 pixels shake
+                self.shake_offset_x = random.randint(int(-shake_amount), int(shake_amount))
+                self.shake_offset_y = random.randint(int(-shake_amount), int(shake_amount))
+        
+        # Check if player took damage and trigger screen shake
+        if self.player.stats['Current_Health'] < self.last_player_health:
+            self.trigger_screen_shake(intensity=0.6, duration=0.2)
+        self.last_player_health = self.player.stats['Current_Health']
         enemies_to_remove = []
         for enemy in self.level_data.get("enemies", []):
             if not enemy.is_alive():

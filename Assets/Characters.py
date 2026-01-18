@@ -342,8 +342,16 @@ class MainCharacter(CharacterBase):
         elif self.moving_left:
             self.facing_right = False
         
+        # Reduce speed to 30% while attacking
+        original_speed = self.speed
+        if self.hit_stun_frames > 0 or (hasattr(self, 'current_attack') and self.current_attack):
+            self.speed = original_speed * 0.3
+        
         # Call parent movement
         super().move(rects)
+        
+        # Restore original speed
+        self.speed = original_speed
 
 
 class Merchant(CharacterBase):

@@ -292,7 +292,7 @@ class RhythmBattleSystem:
         screen.blit(mult_text, mult_rect)
     
     def draw_beat_indicators(self, screen, font, enemies_nearby=False):
-        """Draw Osu-style rhythm circle - outer circle approaches inner circle like Osu approach circles
+        """Draw Osu-style rhythm circle - tiny indicator in top-right
         
         Args:
             screen: Surface to draw on
@@ -317,12 +317,12 @@ class RhythmBattleSystem:
         current_beat = self.audio_system.current_beat
         beat_in_cycle = (current_beat % beat_cycle_length) / beat_cycle_length
         
-        # Circle design - Osu-style hit mechanics
-        center_x = screen.get_width() // 2
-        center_y = screen.get_height() - 100
+        # Tiny circle in top-right
+        center_x = screen.get_width() - 40
+        center_y = 40
         
-        inner_radius = 50  # Static target circle (hitcircle)
-        max_outer_radius = 140  # Starting size for outer circle (approach circle)
+        inner_radius = 8  # Static target circle (hitcircle)
+        max_outer_radius = 22  # Starting size for outer circle (approach circle)
         beat_seconds = beat_cycle_length * 60.0 / bpm
         shrink_per_sec = (max_outer_radius - inner_radius) / max(beat_seconds, 0.001)
 
@@ -338,14 +338,18 @@ class RhythmBattleSystem:
             self.outer_radius_state = max_outer_radius
 
         # Shrink radius over time until it reaches the inner radius
-        self.outer_radius_state = max(inner_radius, self.outer_radius_state - shrink_per_sec * dt)
-        outer_radius = int(self.outer_radius_state)
+        # The shrink should complete exactly at beat_in_cycle = 0 (the next beat)
+        # At beat_in_cycle = 1.0 (end of cycle), outer_radius should be at inner_radius
+        # Use beat_in_cycle to directly control position instead of time for perfect alignment
+        progress = beat_in_cycle  # 0 at start (just reset), 1 at next beat
+        outer_radius = int(max_outer_radius - (max_outer_radius - inner_radius) * progress)
+        outer_radius = max(inner_radius, outer_radius)
         self.prev_beat_in_cycle = beat_in_cycle
         
-        # Create transparent surface for circles
-        surface_size = (int(max_outer_radius * 2.5), int(max_outer_radius * 2.5))
+        # Create transparent surface for circles (60x60 for tiny version)
+        surface_size = (60, 60)
         circle_surface = pygame.Surface(surface_size, pygame.SRCALPHA)
-        center_offset = (surface_size[0] // 2, surface_size[1] // 2)
+        center_offset = (30, 30)
         
         # Determine color based on timing accuracy
         # Map beat_in_cycle to timing window - when outer circle is close to inner (perfect window)
@@ -364,26 +368,17 @@ class RhythmBattleSystem:
             # Too far - gray
             outer_color = (150, 150, 150, 120)
         
-        # Draw outer approach circle (THICKER - 6px stroke)
-        pygame.draw.circle(circle_surface, outer_color, center_offset, outer_radius, 6)
+        # Draw outer approach circle (2px stroke for tiny version)
+        pygame.draw.circle(circle_surface, outer_color, center_offset, outer_radius, 2)
         
-        # Draw inner static hitcircle (3px stroke for definition)
-        pygame.draw.circle(circle_surface, (200, 200, 200, 220), center_offset, inner_radius, 3)
+        # Draw inner static hitcircle (1px stroke)
+        pygame.draw.circle(circle_surface, (200, 200, 200, 220), center_offset, inner_radius, 1)
         
-        # Draw filled center of hitcircle (subtle)
-        pygame.draw.circle(circle_surface, (80, 80, 80, 100), center_offset, inner_radius - 12, 0)
-        
-        # Glow/highlight on hitcircle when close to perfect (just before hit)
-        if beat_in_cycle > 0.85:  # Last 15% of cycle
-            glow_strength = (beat_in_cycle - 0.85) / 0.15  # 0 to 1
-            glow_size = int(15 * glow_strength)
-            glow_alpha = int(120 * glow_strength)
-            pygame.draw.circle(circle_surface, (255, 215, 0, glow_alpha), center_offset, inner_radius + glow_size, 2)
+        # Draw filled center of hitcircle
+        pygame.draw.circle(circle_surface, (80, 80, 80, 100), center_offset, max(1, inner_radius - 3), 0)
         
         # Blit to screen
-        blit_x = center_x - center_offset[0]
-        blit_y = center_y - center_offset[1]
-        screen.blit(circle_surface, (blit_x, blit_y))
+        screen.blit(circle_surface, (center_x - 30, center_y - 30))
     
     def reset_combo(self):
         """Reset combo chain (e.g., when hit by enemy)"""
