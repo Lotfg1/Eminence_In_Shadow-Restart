@@ -22,10 +22,11 @@ import os
 import numpy as np
 from Assets.Settings import Settings
 from Assets.Characters import MainCharacter
-from Assets.Menus import StartMenu, PauseMenu, MerchantMenu, TravelMenu, SettingsMenu, StatusMenu, ScrollableLayout
+from Assets.Menus import StartMenu, PauseMenu, MerchantMenu, TravelMenu, SettingsMenu, StatusMenu, ScrollableLayout, InventoryMenu, EquipmentMenu
 from Assets.AudioConfig import AudioSystem, MusicManager
 from Assets.RhythmBattle import RhythmBattleSystem
 from Assets.AttackConfig import AttackConfig
+from Assets.SpellSystem import SpellCastingSystem
 
 # ==================== CONFIGURATION ====================
 class Config:
@@ -179,6 +180,9 @@ class Game:
         # Rhythm battle system
         self.rhythm_system = RhythmBattleSystem(self.audio_system)
         
+        # Spell casting system
+        self.spell_system = SpellCastingSystem(self.audio_system)
+        
         # Track player health for damage detection (screen shake)
         self.last_player_health = self.player.stats.get('Current_Health', 100)
         
@@ -293,9 +297,10 @@ class Game:
             "pause": PauseMenu(self.font, self.screen.get_width(), self.settings),
             "merchant": MerchantMenu(self.font, self.settings),
             "settings": SettingsMenu(self.font, self.settings, self.config),
-            "status": StatusMenu(self.font, self.player),
+            "status": StatusMenu(self.font, self.player, self.settings),
             "keybinds": KeyBindsMenu(self.font, self.settings),
-            "combos": ScrollableLayout()
+            "inventory": InventoryMenu(self.player, self.settings),
+            "equipment": EquipmentMenu(self.player, self.settings)
         }
         self.active_menu = "start"
         self.travel_menu = None
@@ -632,6 +637,12 @@ class Game:
             elif self.active_menu == "status" and self.previous_menu:
                 self.active_menu = self.previous_menu
                 self.previous_menu = None
+            elif self.active_menu == "inventory" and self.previous_menu:
+                self.active_menu = self.previous_menu
+                self.previous_menu = None
+            elif self.active_menu == "equipment" and self.previous_menu:
+                self.active_menu = self.previous_menu
+                self.previous_menu = None
             else:
                 self.resume_player_physics()
                 self.active_menu = None
@@ -667,12 +678,12 @@ class Game:
         elif result == "Status":
             self.previous_menu = self.active_menu
             self.active_menu = "status"
-        elif result == "Combos":
+        elif result == "inventory":
             self.previous_menu = self.active_menu
-            # Reset scroll state each time we open it
-            if hasattr(self.menus["combos"], "init"):
-                self.menus["combos"].init()
-            self.active_menu = "combos"
+            self.active_menu = "inventory"
+        elif result == "equipment":
+            self.previous_menu = self.active_menu
+            self.active_menu = "equipment"
         elif result == "go_back":
             self.resume_player_physics()
             self.start_go_back_timer()
@@ -814,6 +825,10 @@ class Game:
             if self.active_menu:
                 self.handle_menu_input(event)
                 continue
+            
+            # Handle spell casting input (Shift + typing)
+            if self.spell_system.handle_event(event, self.player):
+                continue  # Spell system consumed the event
             
             # Otherwise handle normal game input
             if not self.go_back_active:
@@ -957,6 +972,11 @@ class Game:
         # Update rhythm battle system
         self.rhythm_system.update(dt, time.time())
         
+        # Update spell system
+        enemies = self.level_data.get("enemies", [])
+        screen_rect = self.screen.get_rect()
+        self.spell_system.update(dt, self.player, enemies, screen_rect)
+        
         # Update player attack state (cooldown, stun decay)
         if self.audio_system.current_song:
             bpm = self.audio_system.current_song.bpm
@@ -969,10 +989,26 @@ class Game:
         
         # ========== Update Enemies ==========
         rects = self.get_collision_rects()
+        
+        # Track health before enemy updates for sneak attack detection
+        health_before_enemies = self.player.stats.get('Current_Health', 0)
+        
         for enemy in self.level_data.get("enemies", []):
             if hasattr(enemy, "update_ai"):
                 # Update enemy AI (behavior, movement, attacks)
                 enemy.update_ai(self.player, rects, self.config.GRAVITY, self.config.MAX_FALL_SPEED, dt, 0, self.frame_counter)
+        
+        # Check if player took damage during enemy updates - trigger sneak counter
+        health_after_enemies = self.player.stats.get('Current_Health', 0)
+        if health_after_enemies < health_before_enemies and self.spell_system.sneak_active:
+            # Find the attacking enemy (closest one in attack range)
+            for enemy in self.level_data.get("enemies", []):
+                if enemy.is_alive() and abs(enemy.rect.centerx - self.player.rect.centerx) < 80:
+                    # Sneak counter activates!
+                    damage_taken = health_before_enemies - health_after_enemies
+                    self.player.stats['Current_Health'] = health_before_enemies  # Restore health
+                    if self.spell_system.check_sneak_counter(self.player, enemy):
+                        break
         
         # ========== Check Player Attacks on Enemies ==========
         if hasattr(self.player, 'current_attack') and self.player.current_attack and self.player.current_attack.get('active'):
@@ -1479,6 +1515,9 @@ class Game:
             
         # Draw beat timing bar (bottom center) - only when enemies nearby
         self.rhythm_system.draw_beat_indicators(self.screen, self.font)
+        
+        # Draw spell casting UI and effects
+        self.spell_system.draw(self.screen, self.camera_x, self.camera_y)
     
     def _draw_health_mana_bars(self):
         """Draw health and mana bars in top-left corner"""

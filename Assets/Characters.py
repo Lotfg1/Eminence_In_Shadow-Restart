@@ -835,22 +835,34 @@ class LargeBandit(EnemyBase):
         # Main character has no cooldown - can attack anytime they're not busy
         return True
     
-    def start_attack(self, current_beat, attack_data, attack_symbol):
+    def start_attack(self, current_beat, attack_data=None):
         """Start a new attack
         
         Args:
             current_beat: Current musical beat
-            attack_data: Dictionary with attack properties (from Combos.py)
-            attack_symbol: Symbol for combo tracking (E, Q, H, N, F, D)
+            attack_data: Optional dictionary with attack properties
         """
         import time
+        
+        # Default attack data if none provided
+        if attack_data is None:
+            attack_data = {
+                "name": "Slash",
+                "damage_multiplier": 1.0,
+                "knockback_multiplier": 1.0,
+                "range": 100,
+                "windup_beats": 0.25,
+                "active_beats": 0.5,
+                "recovery_beats": 0.25,
+                "total_beats": 1.0,
+            }
         
         # Set attack properties from attack_data
         self.is_attacking = True
         self.attack_frame = 0
         self.attack_start_beat = current_beat
         self.current_attack_variant = attack_data
-        self.attack_type = attack_data.get('name', 'unknown')
+        self.attack_type = attack_data.get('name', 'Slash')
         
         # Set beat-based timing
         self.attack_windup_beats = attack_data.get('windup_beats', 0.25)

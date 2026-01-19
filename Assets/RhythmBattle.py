@@ -14,7 +14,6 @@ Features:
 
 import pygame
 import math
-from Assets.Combos import ComboSystem
 
 class RhythmTiming:
     """Defines timing windows for rhythm accuracy"""
@@ -96,7 +95,6 @@ class RhythmBattleSystem:
     """Main rhythm battle system - integrates with game"""
     def __init__(self, audio_system):
         self.audio_system = audio_system
-        self.combo_system = ComboSystem()
         self.combo_chain = []           # List of recent attacks
         self.combo_count = 0            # Current combo count
         self.last_attack_time = 0       # Time of last attack
@@ -110,12 +108,18 @@ class RhythmBattleSystem:
         # Attack state
         self.current_attack = None
         self.attack_cooldown = 0
-        self.combo_finisher_bonus = 1.0
-        self.combo_finisher_timer = 0.0
         
-        # Combo sequences (for special moves)
-        self.input_buffer = []          # Track recent inputs for combos
-        self.buffer_max_time = 4.0      # Clear buffer after 4 seconds
+        # Main attack properties (single attack type)
+        self.main_attack = {
+            "name": "Slash",
+            "damage_multiplier": 1.0,
+            "knockback_multiplier": 1.0,
+            "range": 100,
+            "windup_beats": 0.25,
+            "active_beats": 0.5,
+            "recovery_beats": 0.25,
+            "total_beats": 1.0,
+        }
 
         # Osu approach circle state
         self.outer_radius_state = None
@@ -140,7 +144,7 @@ class RhythmBattleSystem:
         
         # Create attack
         attack = RhythmAttack(
-            attack_type=direction,
+            attack_type="slash",
             direction=direction,
             timestamp=current_time,
             beat_time=beat_time
@@ -157,40 +161,12 @@ class RhythmBattleSystem:
             "y_offset": 0
         })
         
-        # Determine rhythm attack tier based on BPM (fast → shorter attacks)
-        rhythm_type = "quarter_slash"
+        # Set cooldown from main attack total beats
         seconds_per_beat = 0.5
-        bpm = 120
         if self.audio_system.current_song:
-            bpm = self.audio_system.current_song.bpm
             seconds_per_beat = self.audio_system.current_song.seconds_per_beat
-        if bpm >= 150:
-            rhythm_type = "eighth_stab"
-        elif bpm <= 100:
-            rhythm_type = "half_heavy"
-        else:
-            rhythm_type = "quarter_slash"
-
-        rhythm_attack = ComboSystem.get_rhythm_attack(rhythm_type)
-
-        # Set cooldown from rhythm attack total beats, 0.2s faster
-        self.attack_cooldown = max(0.05, rhythm_attack["total_beats"] * seconds_per_beat - 0.2)
-
-        # Record attack in combo system using rhythm symbol and check sequences
-        self.combo_system.record_attack(rhythm_attack["symbol"], self.audio_system.current_beat)
-        combo_hit = self.combo_system.check_combo_sequences()
-        if combo_hit:
-            data = combo_hit["data"]
-            # Apply a temporary finisher bonus multiplier
-            self.combo_finisher_bonus = data.get("damage_multiplier", 1.0)
-            self.combo_finisher_timer = 0.5
-            # Visual feedback for combo
-            self.feedback_displays.append({
-                "text": data.get("name", "COMBO"),
-                "color": data.get("color", (255, 255, 255)),
-                "timer": 0.6,
-                "y_offset": -10
-            })
+        
+        self.attack_cooldown = max(0.05, self.main_attack["total_beats"] * seconds_per_beat - 0.2)
         
         self.current_attack = attack
         return attack
@@ -252,8 +228,11 @@ class RhythmBattleSystem:
         
         timing_mult = self.current_attack.multiplier
         combo_mult = self.get_combo_multiplier()
-        finisher_mult = self.combo_finisher_bonus
-        return timing_mult * combo_mult * finisher_mult
+        return timing_mult * combo_mult
+    
+    def get_attack_data(self):
+        """Get the main attack data for use by player"""
+        return self.main_attack
     
     def update(self, dt, current_time):
         """Update rhythm system"""
@@ -263,11 +242,6 @@ class RhythmBattleSystem:
         # Update cooldown
         if self.attack_cooldown > 0:
             self.attack_cooldown = max(0, self.attack_cooldown - dt)
-        # Decay finisher bonus after short duration
-        if self.combo_finisher_timer > 0:
-            self.combo_finisher_timer = max(0, self.combo_finisher_timer - dt)
-            if self.combo_finisher_timer == 0:
-                self.combo_finisher_bonus = 1.0
         
         # Update feedback displays
         for feedback in self.feedback_displays[:]:
