@@ -91,7 +91,7 @@ SONGS = {
     # City theme - peaceful town music
     "city_theme": Song(
         name="City Theme",
-        filepath="Assets/Music/City/OxT - HIGHEST.mp3",
+        filepath="Assets/Music/City/Kenichiro Suehiro - PEACEFUL DAYS.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True
@@ -118,7 +118,7 @@ SONGS = {
     # For backwards compatibility
     "highest": Song(
         name="OxT - HIGHEST",
-        filepath="Assets/Music/City/OxT - HIGHEST.mp3",
+        filepath="Assets/Music/City/Kenichiro Suehiro - PEACEFUL DAYS.mp3",
         bpm=None,  # Auto-detect actual BPM
         time_signature_beats=4,
         auto_detect_bpm=True
@@ -157,8 +157,9 @@ class AudioSystem:
     def __init__(self, settings=None):
         pygame.mixer.init()
         self.current_song = None
-        self.font = pygame.font.SysFont(None, TIME_SIGNATURE_COUNTER_CONFIG["font_size"])
-        self.info_font = pygame.font.SysFont(None, 24)
+        font_path = os.path.join("Assets", "Fonts", "Cavalhatriz.ttf")
+        self.font = pygame.font.Font(font_path if os.path.exists(font_path) else None, TIME_SIGNATURE_COUNTER_CONFIG["font_size"])
+        self.info_font = pygame.font.Font(font_path if os.path.exists(font_path) else None, 24)
 
         # Volume controls (0.0 - 1.0)
         self.master_volume = 1.0

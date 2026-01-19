@@ -13,6 +13,7 @@ Features:
 """
 
 import pygame
+import os
 
 
 class Animation:
@@ -137,7 +138,8 @@ class PlayerAnimations:
             frame = pygame.Surface((width, height))
             frame.fill(color)
             # Draw frame number for testing
-            font = pygame.font.Font(None, 24)
+            font_path = os.path.join("Assets", "Fonts", "Cavalhatriz.ttf")
+            font = pygame.font.Font(font_path if os.path.exists(font_path) else None, 24)
             text = font.render(str(i + 1), True, (255, 255, 255))
             frame.blit(text, (width // 2 - 6, height // 2 - 12))
             frames.append(frame)
@@ -177,7 +179,8 @@ class EnemyAnimations:
         for i in range(3):
             frame = pygame.Surface((width, height))
             frame.fill(color)
-            font = pygame.font.Font(None, 20)
+            font_path = os.path.join("Assets", "Fonts", "Cavalhatriz.ttf")
+            font = pygame.font.Font(font_path if os.path.exists(font_path) else None, 20)
             text = font.render(str(i + 1), True, (255, 255, 255))
             frame.blit(text, (width // 2 - 5, height // 2 - 10))
             frames.append(frame)

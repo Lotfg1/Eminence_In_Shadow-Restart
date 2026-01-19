@@ -4,6 +4,7 @@ import random
 import time
 import math
 from PIL import Image
+import os
 from Assets.Characters import SmallBandit
 class Interactable:
     def __init__(self, x, y, width, height, collidable=True):
@@ -80,7 +81,8 @@ class Bed(Interactable):
         
         # Draw "Resting..." text during text phase
         if self.fade_phase == "text":
-            font = pygame.font.Font(None, 72)
+            font_path = os.path.join("Assets", "Fonts", "Cavalhatriz.ttf")
+            font = pygame.font.Font(font_path if os.path.exists(font_path) else None, 72)
             text = font.render("Resting...", True, (255, 255, 255))
             text_rect = text.get_rect(center=(screen.get_width() // 2, screen.get_height() // 2))
             screen.blit(text, text_rect)

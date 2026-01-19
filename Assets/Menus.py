@@ -2,6 +2,12 @@
 import pygame
 import os
 
+# Global font helper: use Cavalhatriz if available
+CAVALHATRIZ_PATH = os.path.join("Assets", "Fonts", "Cavalhatriz.ttf")
+
+def get_font(size):
+    return pygame.font.Font(CAVALHATRIZ_PATH if os.path.exists(CAVALHATRIZ_PATH) else None, size)
+
 # ----------------------------
 # BASE MENU
 # ----------------------------
@@ -354,9 +360,11 @@ class StatusMenu:
     def __init__(self, font, player):
         self.font = font
         self.player = player
-        self.title_font = pygame.font.SysFont(None, 48)
-        self.small_font = pygame.font.SysFont(None, 20)
-        self.allocatable_stats = ["Max_Health", "Attack_Damage", "M_Attack_Damage", "Defense"]
+        self.title_font = get_font(48)
+        self.small_font = get_font(20)
+        # Only include stats that actually exist on the player to avoid KeyErrors
+        candidate_stats = ["Max_Health", "M_Attack_Damage", "M_Defense", "Attack_Damage"]
+        self.allocatable_stats = [s for s in candidate_stats if s in getattr(player, 'stats', {})]
         self.selected_stat = 0
         
     def handle_input(self, event):
@@ -407,7 +415,7 @@ class StatusMenu:
             is_selected = i == self.selected_stat
             color = (255, 215, 0) if is_selected else (200, 200, 200)
             
-            stat_value = self.player.stats[stat_name]
+            stat_value = self.player.stats.get(stat_name, 0)
             display_name = stat_name.replace("_", " ")
             stat_text = f"{display_name}: {stat_value} +"
             text = self.font.render(stat_text, True, color)
@@ -429,8 +437,8 @@ class KeyBindsMenu:
     def __init__(self, font, settings):
         self.font = font
         self.settings = settings
-        self.title_font = pygame.font.SysFont(None, 48)
-        self.small_font = pygame.font.SysFont(None, 24)
+        self.title_font = get_font(48)
+        self.small_font = get_font(24)
         # Movement controls
         self.movement_actions = ["MoveLeft", "MoveRight", "Jump", "MoveDown", "Interact", "Attack", "Block", "Pause"]
         self.keybind_actions = self.movement_actions
@@ -586,7 +594,7 @@ class ScrollableLayout:
         pygame.draw.rect(screen, DARK_GREY, (box_x, 76 + y_offset, box_width, 60))
 
         # Add "Instructions" text to top box
-        font = pygame.font.Font(None, 36)
+        font = get_font(36)
         text = font.render("Instructions", True, WHITE)
         text_rect = text.get_rect(center=(center_x, 106 + y_offset))
         screen.blit(text, text_rect)

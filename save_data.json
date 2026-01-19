@@ -1,21 +1,23 @@
 {
   "player": {
     "position": [
-      100,
+      40,
       792
     ],
     "level": 1,
     "exp": 0,
     "exp_for_next_level": 100,
     "stats": {
+      "max_health": 150,
+      "max_mana": 30,
+      "attack_damage": 3,
+      "defense": 8,
       "Current_Health": 150,
       "Max_Health": 150,
       "Current_Mana": 30,
       "Max_Mana": 30,
-      "Attack_Damage": 10,
-      "M_Attack_Damage": 12,
-      "Skill_Attack_Damage": 20,
-      "Defense": 5,
+      "M_Attack_Damage": 2,
+      "Skill_Attack_Damage": 4,
       "M_Defense": 6
     }
   },

@@ -110,6 +110,7 @@ class Config:
     WALL_IMAGE_PATH = "Assets/Photos/Wall.png"
     TENT_IMAGE_PATH = "Assets/Photos/Tent.png"
     ROCK_IMAGE_PATH = "Assets/Photos/Rock.png"
+    CITY_BACKGROUND_PATH = "Assets/Photos/city.jpg"
     
     # Paths
     LEVEL_PATHS = [
@@ -139,9 +140,12 @@ class Game:
         self.screen = pygame.Surface((internal_width, internal_height))
         
         self.clock = pygame.time.Clock()
-        self.font = pygame.font.SysFont(None, 32)
-        self.font_large = pygame.font.SysFont(None, 48)
-        self.timer_font = pygame.font.SysFont(None, 48)
+        # Use Cavalhatriz font if available
+        self.font_path = os.path.join("Assets", "Fonts", "Cavalhatriz.ttf")
+        self.font = pygame.font.Font(self.font_path if os.path.exists(self.font_path) else None, 32)
+        self.font_large = pygame.font.Font(self.font_path if os.path.exists(self.font_path) else None, 48)
+        self.timer_font = pygame.font.Font(self.font_path if os.path.exists(self.font_path) else None, 48)
+        self.hint_font = pygame.font.Font(self.font_path if os.path.exists(self.font_path) else None, 22)
 
         # Player
         self.player = MainCharacter()
@@ -210,6 +214,9 @@ class Game:
         self.images = {}
         if self.config.USE_IMAGES:
             self._load_images()
+        else:
+            # Still load city background even if sprites use rectangles
+            self.images['city_bg'] = pygame.image.load(self.config.CITY_BACKGROUND_PATH).convert() if os.path.exists(self.config.CITY_BACKGROUND_PATH) else None
         
         # Screen shake system
         self.shake_intensity = 0.0  # Current shake intensity (0.0-1.0)
@@ -228,6 +235,11 @@ class Game:
             self.images['wall'] = pygame.image.load(self.config.WALL_IMAGE_PATH)
             self.images['tent'] = pygame.image.load(self.config.TENT_IMAGE_PATH)
             self.images['rock'] = pygame.image.load(self.config.ROCK_IMAGE_PATH)
+            # Optional city background image
+            if os.path.exists(self.config.CITY_BACKGROUND_PATH):
+                self.images['city_bg'] = pygame.image.load(self.config.CITY_BACKGROUND_PATH).convert()
+            else:
+                self.images['city_bg'] = None
         except:
             print("Warning: Some images could not be loaded, falling back to rectangles")
             self.config.USE_IMAGES = False
@@ -492,7 +504,7 @@ class Game:
     
     def _clamp_camera_target_y(self, target_y, internal_height):
         """Clamp camera target Y to level boundaries"""
-        world_height = 920  # Original world height
+        world_height = self.level_data.get("world_height", 920) if self.level_data else 920  # Allow per-level height
         
         # Keep camera from going too high or too low
         target_y = max(0, target_y)
@@ -1078,6 +1090,17 @@ class Game:
         # Clear screen to sky color
         self.screen.fill(self.config.COLOR_SKY)
         
+        # Draw city background image if in City level
+        self._draw_city_background()
+
+        # City-specific transparency overrides (show background art)
+        is_city = self.level_data.get('level_id') == 'city' if self.level_data else False
+        orig_ground_alpha = self.config.ALPHA_GROUND
+        orig_wall_alpha = self.config.ALPHA_WALL
+        if is_city:
+            self.config.ALPHA_GROUND = 0
+            self.config.ALPHA_WALL = 0
+        
         # ========== Draw all game objects ==========
         # Draw in order: ground, platforms, objects, coins, drops, enemies, player
         # (Order matters: things drawn first appear behind things drawn last)
@@ -1096,16 +1119,38 @@ class Game:
         self._draw_go_back_timer()
         self._draw_health_mana_bars()  # Health and mana bars
         self._draw_rhythm_feedback()  # Rhythm battle feedback
+        self._draw_controls_overlay()
         self._draw_menus()
         self._draw_transition()
         self._draw_go_back_fade()
         self._draw_bed_fade()
+
+        # Restore alphas
+        if is_city:
+            self.config.ALPHA_GROUND = orig_ground_alpha
+            self.config.ALPHA_WALL = orig_wall_alpha
         
         # Scale the internal screen to display surface with smooth scaling for better visuals
         scaled = pygame.transform.smoothscale(self.screen, (self.config.SCREEN_WIDTH, self.config.SCREEN_HEIGHT))
         self.display_surface.blit(scaled, (0, 0))
         
         pygame.display.flip()
+
+    def _draw_city_background(self):
+        """Draw the city background image scaled to screen when in the City level"""
+        try:
+            if self.level_data and self.level_data.get('level_id') == 'city':
+                bg = self.images.get('city_bg')
+                if bg:
+                    scaled_bg = pygame.transform.smoothscale(bg, (self.screen.get_width(), self.screen.get_height()))
+                    offset_x = int(self.camera_x * 0.1)
+                    w = scaled_bg.get_width()
+                    # Tile across the viewport to avoid gaps when scrolling
+                    for dx in (-w, 0, w):
+                        self.screen.blit(scaled_bg, ((-offset_x % w) + dx, 0))
+        except Exception:
+            # Fail silently if background isn't available
+            pass
 
     def _draw_with_alpha(self, surface, color, rect, alpha):
         """Helper to draw rectangles with alpha transparency"""
@@ -1410,9 +1455,30 @@ class Game:
             
             # Draw combo counter (top right)
             self.rhythm_system.draw_combo_counter(self.screen, self.font)
+
+    def _draw_controls_overlay(self):
+        """Draw a small controls hint for clarity."""
+        lines = [
+            "Move: A / D",
+            "Jump: W",
+            "Attack: Space",
+            "Block: F",
+            "Interact: E",
+            "Pause / Menu: Esc",
+        ]
+        padding = 8
+        line_height = 20
+        width = 180
+        height = padding * 2 + line_height * len(lines)
+        panel = pygame.Surface((width, height), pygame.SRCALPHA)
+        panel.fill((0, 0, 0, 140))
+        for i, text in enumerate(lines):
+            rendered = self.hint_font.render(text, True, (230, 230, 230))
+            panel.blit(rendered, (padding, padding + i * line_height))
+        self.screen.blit(panel, (10, 10))
             
-            # Draw beat timing bar (bottom center) - only when enemies nearby
-            self.rhythm_system.draw_beat_indicators(self.screen, self.font, enemies_nearby)
+        # Draw beat timing bar (bottom center) - only when enemies nearby
+        self.rhythm_system.draw_beat_indicators(self.screen, self.font)
     
     def _draw_health_mana_bars(self):
         """Draw health and mana bars in top-left corner"""
@@ -1555,7 +1621,8 @@ class Game:
             # During show_destination phase, fade out the destination name
             elif self.transition_phase == "show_destination":
                 # Draw destination name with fade
-                dest_font = pygame.font.SysFont(None, 96)  # Big text
+                # Use Cavalhatriz font for destination display if available
+                dest_font = pygame.font.Font(self.font_path if os.path.exists(self.font_path) else None, 96)
                 dest_text = dest_font.render(self.transition_destination_name, True, (255, 255, 255))
                 dest_text.set_alpha(int(self.destination_fade_alpha))
                 text_x = center_x - dest_text.get_width() // 2

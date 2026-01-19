@@ -253,8 +253,6 @@ class MainCharacter(CharacterBase):
         
         # Attack system
         self.current_attack = None
-        self.current_attack_timer = 0  # Duration to keep attack active (seconds)
-        self.is_attacking = False
         self.attack_frame = 0
         self.attack_start_beat = 0
         self.attack_windup_beats = 0
@@ -344,7 +342,6 @@ class MainCharacter(CharacterBase):
             "type": attack_type,
             "active": True
         }
-        self.current_attack_timer = 0.3  # Clear attack after 0.3 seconds
         
         return final_damage
     
@@ -372,16 +369,8 @@ class MainCharacter(CharacterBase):
         elif self.moving_left:
             self.facing_right = False
         
-        # Use slow speed if attack timer active, otherwise use normal speed
-        original_speed = self.speed
-        if self.current_attack_timer > 0 or self.hit_stun_frames > 0:
-            self.speed = 2  # Slow down to 2 pixels per frame while attacking
-        
-        # Call parent movement
+        # Call parent movement (no attack-related slowdown)
         super().move(rects)
-        
-        # Restore original speed
-        self.speed = original_speed
 
 
 class Merchant(CharacterBase):
@@ -781,16 +770,6 @@ class LargeBandit(EnemyBase):
             dt: Delta time since last frame in seconds
         """
         import time
-        
-        # Update slowdown timer - decrement and clamp to 0
-        if self.current_attack_timer > 0:
-            self.current_attack_timer -= dt
-            if self.current_attack_timer < 0:
-                self.current_attack_timer = 0
-        
-        # Clear attack dict when timer expires
-        if self.current_attack_timer <= 0 and self.current_attack:
-            self.current_attack = None
         
         # Update hit stun
         if self.hit_stun_frames > 0:
